@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Explora EMT, Met Go, Metrovalencia y Cercanías: llegadas en directo y posiciones publicadas o estimadas de tu transporte.">
+  <title>En ruta · Transporte de València</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23c7f86b'/%3E%3Cpath d='M20 14h24v34H20zM20 31h24' fill='none' stroke='%23111719' stroke-width='5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./vendor/map-runtime.js" defer></script>
+  <script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="En ruta, inicio"><span class="brand-icon" aria-hidden="true">↗</span><span>en ruta<span class="brand-dot">.</span></span></a>
+    <span class="city-label">VALÈNCIA <span>/</span> RED EMT</span>
+    <div class="top-actions"><span id="connection" class="connection"><i></i><span>Conectando</span></span><button id="settings-open" class="icon-button" aria-label="Configurar mapa" title="Configurar mapa">⚙</button></div>
+  </header>
+  <main id="workspace" class="workspace">
+    <aside class="sidebar" aria-label="Paradas y próximas llegadas">
+      <div class="provider-picker"><label for="provider-select">Red</label><select id="provider-select" aria-label="Seleccionar red de transporte"></select><p id="provider-description"></p><a id="provider-source" target="_blank" rel="noopener noreferrer"></a></div>
+      <div class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" autocomplete="off" placeholder="Busca una parada o su número" aria-label="Buscar parada por nombre o número"><kbd>/</kbd></div>
+      <div id="search-results" class="search-results" aria-label="Resultados de búsqueda" hidden></div>
+      <div id="network-error" class="notice error" role="alert" hidden></div>
+      <section id="stop-panel" class="stop-panel" aria-labelledby="stop-name">
+        <div class="empty-state"><h2>Selecciona una parada</h2><p>Busca por nombre o número, o elige una parada directamente en el mapa.</p></div>
+      </section>
+    </aside>
+    <section class="map-shell" aria-label="Mapa interactivo de transportes de València">
+      <div id="map"></div>
+      <div class="map-top"><div class="map-title"><span class="small-dot"></span><span id="network-count">Cargando red…</span></div><button id="locate" class="map-button" title="Mostrar mi ubicación" aria-label="Mostrar mi ubicación"><span class="icon-target" aria-hidden="true"></span></button></div>
+      <div class="map-tools"><button id="fit" class="map-button" title="Centrar parada y buses" aria-label="Centrar parada y buses"><span class="icon-fit" aria-hidden="true"></span></button><button id="lines-toggle" class="map-button layers-button" aria-expanded="false" aria-controls="line-panel"><span class="icon-layers" aria-hidden="true"></span><span>Líneas</span></button></div>
+      <section id="line-panel" class="line-panel" hidden aria-label="Capas de líneas EMT">
+        <div class="section-heading"><h2>Capas del mapa</h2><button id="lines-close" class="text-button" aria-label="Cerrar capas">✕</button></div>
+        <p>Selecciona una línea para destacar su recorrido.</p>
+        <label class="check-label"><input id="all-routes" type="checkbox"> Mostrar toda la red</label>
+        <label class="check-label"><input id="context-stops" type="checkbox"> Paradas de otras redes</label>
+        <div id="line-list" class="line-list"></div>
+        <button id="clear-line" class="text-button">Quitar selección de línea</button>
+        <p id="route-progress" class="muted"></p>
+      </section>
+      <div id="toast" role="status" class="toast" hidden></div>
+    </section>
+  </main>
+  <dialog id="settings">
+    <form method="dialog" class="dialog-heading"><span class="eyebrow">A TU RITMO</span><button aria-label="Cerrar configuración" class="icon-button">✕</button></form>
+    <h2>Configura el recorrido</h2>
+    <label class="field">Velocidad para estimaciones <span><output id="speed-value">12</output> km/h</span><input id="speed" type="range" min="6" max="60" step="1" value="12"></label>
+    <p class="muted">Solo afecta posiciones estimadas: EMT 12 km/h, ATMV 20 y Metro 30 por defecto. Las coordenadas publicadas por el operador no se extrapolan.</p>
+    <label class="field">Conexión de datos<select id="transport"><option value="auto">Automática · frontend, con proxy de respaldo</option><option value="direct">Directa · solo frontend</option><option value="proxy">Proxy · servidor intermediario</option></select></label>
+    <label class="check-label"><input id="animate" type="checkbox" checked> Animar el avance de los buses</label>
+    <div class="explanation"><h3>Qué representa cada posición</h3><p>GPS: coordenadas y hora de medición publicadas por Renfe. Posición publicada: coordenadas Met Go sin hora GPS; no podemos verificar su antigüedad real. Estimación: tiempo de llegada × velocidad media, medido hacia atrás sobre el recorrido.</p><p>EMT y Cercanías se consultan cada 20 segundos; Met Go y Metrovalencia, cada 30. Solo las estimaciones avanzan entre consultas. Los puntos GPS se actualizan al recibir una nueva medición, sin inventar movimiento posterior.</p><p>Se ocultan datos recibidos o medidos hace más de 90 segundos, horarios programados y posiciones fuera de cobertura. Las tarjetas sin ETA o sin posición lo indican. Cercanías necesita el backend para preparar el GTFS de València; Metrovalencia lo usa como respaldo.</p><p>Las paradas se diferencian por color, forma y operador. Los colores de línea son identificativos; Metrovalencia utiliza sus colores publicados.</p></div>
+    <a class="source-link" href="https://geoportal.emtvalencia.es/visor?lang=es" target="_blank" rel="noopener noreferrer">Fuente: geoportal EMT València ↗</a>
+  </dialog>
+</body>
+</html>

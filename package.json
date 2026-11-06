@@ -1,0 +1,32 @@
+{
+  "name": "valencia-live-transit-map",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Real-time Valencia transit map with vanilla JavaScript",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "build:map": "esbuild scripts/map-entry.js --bundle --format=iife --target=es2022 --outfile=public/vendor/map-runtime.js",
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node test/browser.mjs",
+    "test:providers": "node test/providers-live.mjs",
+    "service:emt": "node services/serve.mjs emt",
+    "service:atmv": "node services/serve.mjs atmv",
+    "service:metro": "node services/serve.mjs metro",
+    "service:cercanias": "node services/serve.mjs cercanias"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "csv-parse": "^7.0.2",
+    "leaflet": "1.9.4",
+    "unzipper": "^0.12.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "esbuild": "^0.25.10"
+  }
+}
