@@ -47,6 +47,82 @@ Ejemplos de las otras redes:
 
 `HOST=0.0.0.0 PORT=3000 npm start` permite acceso desde otros dispositivos de tu red; la geolocalización del navegador requiere HTTPS o localhost.
 
+## Despliegue en un VPS
+
+El proyecto incluye [docker-compose.yml](docker-compose.yml), [Dockerfile](Dockerfile) y [nginx.conf](nginx.conf). Docker Compose construye dos servicios: `frontend` sirve la web compilada con Nginx y reenvía `/api/` al `backend` Node, que ejecuta los cuatro proveedores y la API v1. Solo el frontend publica un puerto; ambos servicios se reinician al arrancar el VPS y tienen comprobaciones de salud.
+
+Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a OpenStreetMap, y espacio y memoria suficientes para procesar el GTFS nacional de Renfe. La primera consulta de Cercanías puede tardar y consumir más memoria; su caché está en RAM y se pierde al reiniciar.
+
+1. En el directorio del proyecto, prepara la configuración:
+
+	```bash
+	cp .env.example .env
+	openssl rand -hex 32
+	```
+
+	Edita `.env` y coloca el valor generado en `API_KEYS`. Puedes indicar varias claves separadas por comas. Protege el archivo con `chmod 600 .env`; no lo subas al repositorio ni incluyas las claves en el código del navegador. Las variables de entorno de Docker también son visibles para los administradores del host.
+
+2. Crea la red externa si aún no existe y arranca los servicios:
+
+	```bash
+	docker network inspect proxy-net >/dev/null 2>&1 || docker network create proxy-net
+	docker compose up -d --build
+	docker compose ps
+	```
+
+3. Para una prueba inicial, abre `http://IP_DEL_VPS:8083`. El puerto y la interfaz se configuran con `WEB_PORT` y `BIND_ADDRESS`. El valor predeterminado `0.0.0.0` publica el puerto en todas las interfaces IPv4; asegúrate de que las reglas del proveedor del VPS permitan solo el acceso deseado. Docker puede publicar puertos al margen de reglas UFW: comprueba las reglas efectivas del host y del proveedor.
+
+4. Para producción, usa un dominio y HTTPS mediante un proxy inverso existente con certificado válido. Conecta ese proxy a `proxy-net` y configura su destino como `http://en-ruta-frontend:80`, conservando las rutas completas, incluidas `/api/`. Ajusta su tiempo de lectura a al menos 150 segundos para la carga inicial de Cercanías. Establece `BIND_ADDRESS=127.0.0.1` en `.env` y vuelve a ejecutar `docker compose up -d` para no exponer el puerto de prueba a Internet. La configuración incluida no solicita certificados ni habilita HTTPS por sí sola. La geolocalización móvil y el envío seguro de claves requieren HTTPS.
+
+`PROXY_NETWORK` cambia el nombre de la red externa, que debe existir antes de arrancar. `API_CORS_ORIGINS` contiene los orígenes web autorizados exactos, separados por comas, por ejemplo `https://cliente.example`; vacío no autoriza solicitudes CORS. Las peticiones servidor a servidor no necesitan CORS. `API_RATE_LIMIT` limita las peticiones a `/api/v1` por clave y minuto, por proceso; el valor predeterminado es 120.
+
+Comprueba desde el propio VPS, sustituyendo la clave de forma segura en tu terminal:
+
+```bash
+curl -i http://127.0.0.1:8083/api/v1/operators
+# Debe responder 401 sin clave.
+read -rs -p 'Clave API: ' TRANSIT_API_KEY; echo
+curl -H "X-API-Key: $TRANSIT_API_KEY" http://127.0.0.1:8083/api/v1/operators
+unset TRANSIT_API_KEY
+docker compose logs -f --tail=100
+```
+
+Usa HTTPS para consultar la API desde fuera del VPS; HTTP directo es solo para diagnóstico local. La API versionada requiere clave, pero `/api/` y `/api/providers/` son intermediarios públicos necesarios para la web y no están protegidos por `API_KEYS` ni por `API_RATE_LIMIT`. En producción aplica límites por cliente en el proxy exterior y evita confiar en cabeceras de IP enviadas directamente por clientes. Si hay varias réplicas, usa un limitador compartido. Comprueba también las políticas y límites de uso de las fuentes y de los tiles.
+
+Para actualizar, obtén los cambios del proyecto y ejecuta `docker compose up -d --build`; para detenerlo, `docker compose down`. La red externa no se elimina. El backend se resuelve de nuevo por DNS interno cuando cambia su contenedor; tras un reinicio puede haber unos segundos de indisponibilidad.
+
+### Comprobación del despliegue
+
+En una máquina de pruebas con Node.js 22, dependencias de desarrollo y Chromium de Playwright instalados, configura `TRANSIT_API_KEY` con una clave válida y ejecuta:
+
+```bash
+BASE_URL=https://tu-dominio.example TRANSIT_API_KEY="$TRANSIT_API_KEY" npm run test:deployment
+BASE_URL=https://tu-dominio.example npm run test:ui
+BASE_URL=https://tu-dominio.example npm run test:browser
+```
+
+`test:deployment` verifica autenticación y contrato, carga Metro a través del proxy real y prueba búsqueda, mapa y panel en tres tamaños táctiles, incluido horizontal. `test:ui` usa respuestas simuladas para probar las cuatro redes; `test:browser` depende de datos reales de EMT y de la disponibilidad de vehículos. Las pruebas móviles son emulación Chromium, no sustituyen comprobar Safari y Chrome en dispositivos físicos. Las capturas se guardan en `test-results/`.
+
+## API para otras aplicaciones
+
+La API JSON de lectura se publica bajo `/api/v1` y requiere una clave en la cabecera `X-API-Key`. Configura una o varias claves secretas separadas por comas mediante `API_KEYS`; si no se configura ninguna, la API responde `503`. No incluyas claves en aplicaciones distribuidas al navegador. El contrato completo está en [docs/openapi.yaml](docs/openapi.yaml) y también se sirve autenticado en `/api/v1/openapi.yaml`.
+
+Con `TRANSIT_API_KEY` configurada en el entorno con una clave secreta:
+
+```bash
+API_KEYS="$TRANSIT_API_KEY" API_CORS_ORIGINS="https://cliente.example" npm start
+curl -H "X-API-Key: $TRANSIT_API_KEY" 'http://localhost:3000/api/v1/operators/metro/stops?limit=10&q=facultats'
+curl -H "X-API-Key: $TRANSIT_API_KEY" 'http://localhost:3000/api/v1/operators/metro/stops/26/arrivals'
+```
+
+Las rutas incluyen `/operators`, `/operators/{operator}/stops`, `/operators/{operator}/lines` y los recursos de detalle, llegadas, vehículos y recorridos descritos en OpenAPI. Los IDs son cadenas en el ámbito de cada operador; las fechas se expresan en UTC y las coordenadas GeoJSON son `[longitud, latitud]`. La paginación usa `limit` y `offset` y ordena por ID. Los datos pueden cambiar entre páginas al actualizarse la red.
+
+`meta.fetchedAt` indica cuándo se normalizó la respuesta, no necesariamente cuándo se midió el dato. `position.measuredAt` es `null` cuando el proveedor no publica la hora; la API nunca convierte la posición estimada por la interfaz en una posición real. La lista de vehículos por parada es parcial y puede estar vacía; no es un inventario global. Las geometrías de ATMV con `serviceToday: false` corresponden a un día alternativo; si falla alguna variante, `meta.failedVariants` indica cuántas faltan.
+
+Por defecto, CORS no autoriza orígenes; `API_CORS_ORIGINS` admite una lista de orígenes exactos separados por comas. `API_RATE_LIMIT` fija el máximo de peticiones por clave y minuto, por proceso (predeterminado: 120). En múltiples instancias se necesita un limitador compartido en el despliegue. Utiliza HTTPS y protege las claves fuera del repositorio. Revisa las condiciones y límites de las fuentes antes de publicar el servicio.
+
+**Importante:** la clave solo protege `/api/v1`; las rutas heredadas `/api/` y `/api/providers/` siguen sin autenticación para no romper la web, y no deben considerarse protegidas por el límite de la API. El servidor escucha en `127.0.0.1` por defecto; la exposición pública y la terminación HTTPS deben configurarse en el despliegue.
+
 ## Frontend independiente
 
 ```bash
@@ -142,6 +218,7 @@ npm test
 npm run build
 npx playwright install chromium  # solo si no está instalado
 npm run test:browser
+npm run test:ui          # navegador con datos simulados, sin depender de operadores
 npm run test:providers
 ```
 

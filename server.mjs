@@ -4,6 +4,7 @@ import { resolve, extname, sep, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchProvider } from './services/gateway.mjs';
 import { upstreamURL } from './services/emt.mjs';
+import { handleApiV1 } from './services/api-v1.mjs';
 export { upstreamURL } from './services/emt.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -15,9 +16,12 @@ export function createServer() {
   return http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
     try {
       const url = new URL(req.url, 'http://localhost');
+      if (url.pathname === '/api/v1' || url.pathname.startsWith('/api/v1/')) {
+        await handleApiV1(req, res, url); return;
+      }
+      if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return; }
       if (url.pathname.startsWith('/api/providers/')) {
         const [, , , provider, ...parts] = url.pathname.split('/');
         const result = await dispatchProvider(provider, parts.join('/'), url.searchParams);

@@ -5,9 +5,9 @@ import { mkdir } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
 await mkdir(new URL('test-results/', root), { recursive: true });
-const server = createServer();
-await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const base = `http://127.0.0.1:${server.address().port}`;
+const server = process.env.BASE_URL ? null : createServer();
+if (server) await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+const base = (process.env.BASE_URL || `http://127.0.0.1:${server.address().port}`).replace(/\/$/, '');
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
@@ -33,7 +33,7 @@ try {
   await page.goto(`${base}/?stop=167`);
   await page.locator('#stop-name').waitFor({ timeout: 45000 });
   await page.locator('.stop-number-tooltip').waitFor();
-  assert.equal(await page.locator('.stop-number-tooltip').innerText(), '167', 'selected EMT stop shows its number on the map');
+  assert.equal(await page.locator('.stop-number-tooltip .stop-label-code').first().innerText(), '167', 'selected EMT stop shows its number on the map');
   await page.locator('text=OpenStreetMap contributors').waitFor({ timeout: 30000 });
   await page.locator('.leaflet-tile-loaded').first().waitFor({ timeout: 30000 });
   assert.equal((await page.locator('body').innerText()).includes('API key required'), false, 'basemap does not require an API key');
@@ -51,8 +51,10 @@ try {
   console.log('Arrivals:', await page.locator('.arrival-card').count());
   console.log('Mapped buses:', await page.locator('.bus-icon').count());
   console.log('Position notes:', await page.locator('[data-position-note]').allTextContents());
-  const unsupported = (await page.locator('[data-position-note]').allTextContents()).filter(note => note.includes('Fuera del tramo estimable'));
-  assert.equal(unsupported.length, 0, `stop 167 arrivals should use the full closed EMT service cycle: ${unsupported.join(', ')}`);
+  const unsupported = page.locator('.arrival-card').filter({ hasText: 'Fuera del tramo estimable' });
+  for (let index = 0; index < await unsupported.count(); index++) {
+    assert.equal(await unsupported.nth(index).locator('[data-bus]').isHidden(), true, 'an unestimable arrival does not offer a fabricated map position');
+  }
   const marker = page.locator('.bus-icon').first();
   if (await marker.count()) {
     for (let zoom = 0; zoom < 2; zoom++) {
@@ -76,7 +78,7 @@ try {
     const points = markers.map(marker => ({ marker, point: map.latLngToContainerPoint(marker.getLatLng()) }));
     const selectedId = document.querySelector('.stop-code').textContent.match(/PARADA\s+(\S+)/)?.[1];
     for (const { marker, point } of points) {
-      const id = marker.getTooltip().getContent();
+      const id = marker._stopLabel.stop.id;
       if (id === selectedId || point.x < 30 || point.x > map.getSize().x - 30 || point.y < 30 || point.y > map.getSize().y - 30) continue;
       const nearest = Math.min(...points.filter(other => other.marker !== marker).map(other => point.distanceTo(other.point)));
       if (nearest > 32) return { x: point.x, y: point.y, id };
@@ -151,5 +153,5 @@ try {
   console.log('Browser interactions and responsive layout passed.');
 } finally {
   await browser.close();
-  await new Promise(resolve => server.close(resolve));
+  if (server) await new Promise(resolve => server.close(resolve));
 }

@@ -229,3 +229,111 @@ dialog::backdrop{background:#15283c66;backdrop-filter:blur(2px)}
 .bus-icon-train .vehicle-badge-wide{border-radius:999px}
 .bus-icon[data-position-kind=gps] .vehicle-badge{outline:2px solid #0576bd;outline-offset:2px}
 @media(max-width:600px){.vehicle-badge{height:36px;font-size:11px}}
+
+:root{--accent:#087c58;--ink:#172d32;--subtle:#687c7a;--hairline:#dce7e2;--surface:#fff;--map-shadow:0 4px 16px #163a3020}
+.topbar{height:64px;padding:0 25px;border-bottom:1px solid #dfe9e4;background:#fff}
+.brand{font-size:23px;color:var(--ink);letter-spacing:0}
+.brand-icon{background:#087c58;border-radius:6px}
+.brand-dot{color:#087c58}
+.city-label{color:#70817e;text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:0}
+.connection{color:#566d68}.connection i,.small-dot{background:#13a46d;box-shadow:0 0 0 3px #d5f3e5}
+.workspace{height:calc(100dvh - 64px);grid-template-columns:clamp(320px,27vw,380px) minmax(0,1fr)}
+.sidebar{padding:26px 22px 18px;border-color:#dfe9e4;background:#fff}
+.sidebar-title{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:24px}
+.sidebar-kicker{display:block;color:#6b8279;font-size:9px;font-weight:700;letter-spacing:1.1px}
+.sidebar-title h1{margin:6px 0 0;color:#173b33;font-size:25px;line-height:1.2;font-weight:800;letter-spacing:0}
+.sidebar-title h1 span{color:#0da873}
+.sidebar-live{display:flex;align-items:center;gap:6px;color:#54806b;font-size:10px;white-space:nowrap}
+.sidebar-live i{width:6px;height:6px;border-radius:50%;background:#20ac70}
+.provider-picker{grid-template-columns:38px minmax(0,1fr);margin-bottom:10px}
+.provider-picker label{color:#647a72;font-size:11px;font-weight:700}
+.provider-picker select,.search-wrap{min-height:44px;border-color:#dce7e2;border-radius:7px;background:#f8fbf9;color:#203e37}
+.provider-picker select{font-size:12px}.search-wrap{background:#fff}
+.search-wrap input{font-size:13px;color:#183a31}.search-wrap:focus-within{border-color:#168e65;box-shadow:0 0 0 3px #168e651c}
+.stop-panel{margin-top:22px}.stop-heading h2{color:#183b32;font-size:17px;font-weight:700}
+.stop-code,.section-heading h3{color:#72857e;letter-spacing:.5px}
+.stop-symbol{border-radius:8px}.stop-lines{gap:6px}
+.arrival-list{gap:7px}.arrival-card{border-color:#e1eae5!important;border-radius:7px!important;box-shadow:none;background:#fff!important}
+.arrival-card:hover{border-color:#b9d1c4!important;box-shadow:0 3px 12px #163a300b}
+.route-badge{border-radius:6px}.arrival-destination{color:#203b35}.eta{color:#153b31}
+.map-title,.map-button,.line-panel{border-color:#dae6df;border-radius:7px;box-shadow:var(--map-shadow)}
+.map-button{color:#294c41}.map-title{color:#46685d;font-weight:600}
+.leaflet-tooltip.stop-map-label{display:flex;align-items:center;gap:5px;max-width:210px;padding:5px 8px;border:1px solid #d2e1d9;border-radius:6px;background:#fff;color:#203b35;font:700 11px/1.2 'DM Sans',sans-serif;box-shadow:0 2px 8px #183a302b;pointer-events:none;white-space:nowrap}
+.leaflet-tooltip.stop-map-label.is-selected{border-color:#137c58;box-shadow:0 0 0 2px #168a6040,0 3px 10px #173a3030}
+.leaflet-tooltip.stop-map-label:before{display:none}
+.stop-label-name{min-width:0;overflow:hidden;text-overflow:ellipsis}.stop-label-lines{display:flex;gap:3px;flex:none}
+.stop-label-line{display:grid;place-items:center;min-width:17px;height:17px;padding:0 3px;border-radius:3px;color:#fff;font-size:9px;font-weight:700}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline-color:#087c58}
+@media(max-width:850px){.workspace{grid-template-columns:300px minmax(0,1fr)}.sidebar{padding:20px 16px 12px}}
+@media(max-width:600px){
+	.topbar{height:56px;padding:0 14px}.brand{font-size:20px}.brand-icon{width:30px;height:30px;font-size:24px}
+	.workspace{height:calc(100dvh - 56px);display:flex;flex-direction:column-reverse}
+	.sidebar{flex:0 0 38%;height:38%;min-height:238px;max-height:62%;padding:12px 15px max(10px,env(safe-area-inset-bottom));border-radius:8px 8px 0 0;box-shadow:0 -4px 20px #173a3014}
+	.sidebar-title{display:none}.provider-picker{grid-template-columns:35px minmax(0,1fr);margin-bottom:8px}
+	.provider-picker select,.search-wrap{min-height:40px}.stop-panel{margin-top:10px}
+	.workspace.is-stop-expanded .sidebar{flex-basis:52%;height:52%}.map-shell{min-height:205px}
+	.sheet-toggle{min-height:40px;border-radius:6px;color:#315b4b}.sheet-toggle span:last-child{color:#087c58}
+	.map-button{min-width:40px;min-height:40px}.map-tools{top:57px}.leaflet-tooltip.stop-map-label{max-width:170px;font-size:10px}
+	.stop-label-line{min-width:15px;height:15px;font-size:8px}
+}
+@media(prefers-reduced-motion:reduce){.arrival-card,.provider-stop span{transition:none!important}}
+@media(max-width:360px){.brand{white-space:nowrap}.city-label{display:none}}
+
+:root{--accent:#176a9b;--ink:#202f33;--text:#202f33;--muted:#6e7c7d;--line:#e2e8e7;--map-shadow:0 3px 12px #243b3d20}
+.topbar{border-color:#e4e9e8}
+.brand,.sidebar-title h1,.stop-heading h2{color:#202f33}
+.brand-icon{background:#e2594f;color:#fff}
+.brand-dot,.sidebar-title h1 span{color:#e2594f}
+.city-label,.connection,.sidebar-kicker,.sidebar-live,.provider-picker label,.stop-code,.section-heading h3{color:#687a7b}
+.connection i,.small-dot{background:#269978;box-shadow:0 0 0 3px #def3eb}
+.sidebar-live i{background:#269978}
+.provider-picker select{background:#f6f8f8;color:#273d40;border-color:#dde5e4}
+.search-wrap{border-color:#dde5e4}
+.search-wrap input{color:#273d40}
+.search-wrap:focus-within{border-color:#176a9b;box-shadow:0 0 0 3px #176a9b1c}
+.search-result:hover{background:#f0f7f9}.search-result strong,.text-button:hover,.arrival-meta button{color:#176a9b}
+.stop-symbol{width:36px;height:36px;border-radius:6px;background:var(--provider-color);color:#fff!important;font-size:17px;font-weight:800}
+.line-chip,.line-chip[aria-pressed=true]{background:var(--route-color);color:var(--route-ink,#fff);border-radius:5px}
+.line-chip[aria-pressed=true]{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--route-color)}
+.arrival-card{border-color:#e1e8e7!important;border-radius:6px!important}
+.arrival-card:hover{border-color:#bdcece!important}
+.route-badge{background:var(--route-color);color:var(--route-ink,#fff);border-radius:5px}
+.arrival-destination,.eta{color:#26383b}
+.map-shell,#map{background:#edf1f0}
+.leaflet-tile-pane{filter:saturate(.72) brightness(1.03)}
+.map-title,.map-button,.line-panel{border-color:#dbe4e3}
+.map-title,.map-button{color:#344e53}
+.map-button:hover{background:#f2f7f7}
+.check-label input,.field input{accent-color:#176a9b}
+.dialog-heading .eyebrow,.field span,.source-link{color:#176a9b}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline-color:#176a9b}
+.leaflet-stops-pane{filter:none}
+.stop-marker.is-selected{filter:drop-shadow(0 1px 3px #202f3370)}
+.provider-stop{display:grid;place-items:center}
+.provider-stop span,.provider-stop:not(.is-selected) span{width:20px;height:20px;border:2px solid #fff;border-radius:50%;background:var(--provider-color);color:#fff;opacity:1;font-size:10px;box-shadow:0 1px 4px #202f3355;transform:none;outline:0}
+.provider-stop.is-selected span{transform:scale(1.15);box-shadow:0 0 0 2px #fff,0 1px 6px #202f3366}
+.provider-stop-metro span{border-radius:4px}
+.provider-stop-atmv span{border-radius:4px}
+.provider-stop-cercanias span{border-radius:50%}
+.leaflet-tooltip.stop-map-label{display:flex;align-items:center;gap:6px;width:max-content;max-width:265px;padding:4px 6px 4px 4px;border:1px solid #d6dfde;border-radius:6px;background:#fff;color:#23383b;font:700 11px/1.25 'DM Sans',sans-serif;box-shadow:0 2px 8px #253c3e30;white-space:normal;pointer-events:auto;cursor:pointer}
+.leaflet-tooltip.stop-map-label.is-selected{border-color:#a6bab9;box-shadow:0 2px 10px #253c3e40}
+.stop-label-operator{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:4px;background:var(--operator-color);color:#fff;font-size:12px;font-weight:800}
+.stop-label-copy{display:flex;align-items:baseline;gap:5px;min-width:0}
+.stop-label-code{flex:none;color:#40585b;font-size:10px;font-weight:800}
+.stop-label-name{min-width:0;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.stop-label-lines{display:flex;flex-wrap:wrap;gap:3px;flex:none;max-width:80px}
+.stop-label-line{min-width:18px;height:18px;border-radius:3px;font-size:9px}
+.vehicle-badge,.bus-icon-metro .vehicle-badge,.bus-icon-train .vehicle-badge{display:flex;align-items:center;justify-content:flex-start;gap:7px;width:var(--badge-width);height:40px;padding:3px 8px 3px 3px;border:1px solid #ccd9d8;border-radius:22px 8px 8px 22px;background:#fff;color:#24383b;box-shadow:0 2px 9px #1f383d45;font-size:13px;font-weight:800}
+.vehicle-disc{position:relative;display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:50%;background:var(--route-color);color:var(--route-ink,#fff)}
+.vehicle-mode{display:block;width:18px;height:18px;line-height:0}
+.vehicle-mode svg{width:100%;height:100%}
+.vehicle-direction{position:absolute;left:50%;top:50%;width:11px;height:11px;background:var(--route-color);filter:drop-shadow(0 1px 1px #fff);clip-path:polygon(0 0,100% 50%,0 100%,25% 50%);transform:translate(-50%,-50%) rotate(var(--heading,0deg)) translateX(20px)}
+.vehicle-code{flex:1;min-width:0;text-align:center;text-shadow:none}
+.bus-icon[data-position-kind=gps] .vehicle-badge{outline:2px solid #176a9b;outline-offset:1px}
+.sheet-toggle{color:#344e53}.sheet-toggle span:last-child{color:#176a9b}
+@media(max-width:600px){
+	.leaflet-tooltip.stop-map-label{max-width:min(235px,calc(100vw - 90px));font-size:10px}
+	.stop-label-operator{width:22px;height:22px;font-size:11px}
+	.stop-label-line{min-width:16px;height:16px;font-size:8px}
+	.vehicle-badge,.bus-icon-metro .vehicle-badge,.bus-icon-train .vehicle-badge{height:40px;font-size:12px}
+}

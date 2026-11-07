@@ -21,11 +21,15 @@ services/
   shared.mjs        HTTP, validación y caché
   index.mjs         Registro de handlers de backend
   gateway.mjs       Resolución a módulo local o proceso independiente
+  api-data.mjs      Normalización backend para API v1
+  api-v1.mjs        Rutas, autenticación, CORS y límites de API v1
   serve.mjs         Arranque de un único operador
   certs/            Certificado intermedio público de Sectigo
 ```
 
 `app.js` mantiene selección, presentación, capas y polling; los adaptadores normalizan las fuentes. El cambio de operador incrementa una generación de red y de selección, aborta la consulta de llegadas y descarta resultados geográficos tardíos. Las colas antiguas dejan de lanzar trabajo; los datos de un operador no pueden sobrescribir los de otro aunque compartan números de línea o parada.
+
+La API externa normalizada tiene su propio contrato en [openapi.yaml](openapi.yaml). Su autenticación y configuración están documentadas en el [README](../README.md#api-para-otras-aplicaciones). Los endpoints de proveedor descritos más abajo son intermediarios heredados, no el contrato de la API versionada.
 
 ## Contrato de frontend
 

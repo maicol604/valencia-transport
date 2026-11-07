@@ -11,6 +11,8 @@
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
     "test:browser": "node test/browser.mjs",
+    "test:ui": "node test/browser-ui.mjs",
+    "test:deployment": "node test/deployment.mjs",
     "test:providers": "node test/providers-live.mjs",
     "service:emt": "node services/serve.mjs emt",
     "service:atmv": "node services/serve.mjs atmv",
@@ -22,11 +24,15 @@
   },
   "dependencies": {
     "csv-parse": "^7.0.2",
+    "jsdom": "^29.1.1",
     "leaflet": "1.9.4",
     "unzipper": "^0.12.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",
-    "esbuild": "^0.25.10"
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "esbuild": "^0.25.10",
+    "yaml": "^2.9.1"
   }
 }

@@ -1,0 +1,292 @@
+openapi: 3.1.0
+info:
+  title: En ruta Transport API
+  version: 1.0.0
+  description: >-
+    Read-only Valencia transit data. IDs are scoped to an operator. Positions are
+    published by operators, not extrapolated. Data availability varies by source.
+servers:
+  - url: /api/v1
+security:
+  - apiKey: []
+paths:
+  /operators:
+    get:
+      operationId: listOperators
+      responses:
+        '200':
+          description: Available operators
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Operator' }
+        default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/stops:
+    parameters: [ { $ref: '#/components/parameters/Operator' } ]
+    get:
+      operationId: listStops
+      parameters:
+        - { $ref: '#/components/parameters/Query' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200': { $ref: '#/components/responses/StopList' }
+        default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/stops/{stopId}:
+    parameters:
+      - { $ref: '#/components/parameters/Operator' }
+      - { $ref: '#/components/parameters/StopId' }
+    get:
+      operationId: getStop
+      responses:
+        '200':
+          description: Stop
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Stop' }
+                  meta: { $ref: '#/components/schemas/Metadata' }
+        default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/stops/{stopId}/arrivals:
+    parameters:
+      - { $ref: '#/components/parameters/Operator' }
+      - { $ref: '#/components/parameters/StopId' }
+    get:
+      operationId: getArrivals
+      responses:
+        '200':
+          description: Arrival predictions and available positions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Arrival' } }
+                  meta: { $ref: '#/components/schemas/RealtimeMetadata' }
+        default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/stops/{stopId}/vehicles:
+    parameters:
+      - { $ref: '#/components/parameters/Operator' }
+      - { $ref: '#/components/parameters/StopId' }
+    get:
+      operationId: getVehiclesForStop
+      responses:
+        '200':
+          description: Published positions associated with this stop, potentially incomplete
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Vehicle' } }
+                  meta: { $ref: '#/components/schemas/RealtimeMetadata' }
+        default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/lines:
+    parameters: [ { $ref: '#/components/parameters/Operator' } ]
+    get:
+      operationId: listLines
+      parameters:
+        - { $ref: '#/components/parameters/Query' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200': { $ref: '#/components/responses/LineList' }
+        default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/lines/{lineId}:
+    parameters:
+      - { $ref: '#/components/parameters/Operator' }
+      - { $ref: '#/components/parameters/LineId' }
+    get:
+      operationId: getLine
+      responses:
+        '200':
+          description: Line
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Line' }
+                  meta: { $ref: '#/components/schemas/Metadata' }
+        default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/lines/{lineId}/routes:
+    parameters:
+      - { $ref: '#/components/parameters/Operator' }
+      - { $ref: '#/components/parameters/LineId' }
+    get:
+      operationId: getRoutes
+      responses:
+        '200':
+          description: Available route variants and GeoJSON geometry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Route' } }
+                  meta: { $ref: '#/components/schemas/Metadata' }
+        default: { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    apiKey: { type: apiKey, in: header, name: X-API-Key }
+  parameters:
+    Operator: { name: operator, in: path, required: true, schema: { type: string, enum: [emt, atmv, metro, cercanias] } }
+    StopId: { name: stopId, in: path, required: true, schema: { type: string } }
+    LineId: { name: lineId, in: path, required: true, schema: { type: string } }
+    Query: { name: q, in: query, schema: { type: string }, description: Case-insensitive ID or name search. }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+    Offset: { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+  responses:
+    Error:
+      description: Error (400 invalid request, 401 invalid key, 403 origin, 404 missing resource, 405 method, 429 limit, 502 provider failure, 503 unavailable)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    StopList:
+      description: Stops ordered by ID
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { type: array, items: { $ref: '#/components/schemas/Stop' } }
+              meta: { $ref: '#/components/schemas/PageMetadata' }
+    LineList:
+      description: Lines ordered by ID
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data: { type: array, items: { $ref: '#/components/schemas/Line' } }
+              meta: { $ref: '#/components/schemas/PageMetadata' }
+  schemas:
+    Operator:
+      type: object
+      required: [id, name, mode]
+      properties:
+        id: { type: string, enum: [emt, atmv, metro, cercanias] }
+        name: { type: string }
+        mode: { type: string, enum: [bus, rail] }
+    Point:
+      type: object
+      required: [type, coordinates]
+      properties:
+        type: { const: Point }
+        coordinates:
+          type: array
+          minItems: 2
+          maxItems: 2
+          prefixItems: [ { type: number, description: Longitude }, { type: number, description: Latitude } ]
+    Stop:
+      type: object
+      required: [operator, id, name, location, lineIds]
+      properties:
+        operator: { type: string }
+        id: { type: string }
+        name: { type: string }
+        location: { $ref: '#/components/schemas/Point' }
+        lineIds: { type: [array, 'null'], items: { type: string }, description: Null when membership is not available in the network. }
+    Line:
+      type: object
+      required: [operator, id, name, color]
+      properties:
+        operator: { type: string }
+        id: { type: string }
+        name: { type: string }
+        color: { type: [string, 'null'] }
+    Route:
+      type: object
+      required: [id, direction, concession, stopIds, geometry, serviceToday]
+      properties:
+        id: { type: string }
+        direction: { type: [integer, 'null'] }
+        concession: { type: [string, 'null'] }
+        stopIds: { type: [array, 'null'], items: { type: string } }
+        geometry:
+          type: object
+          required: [type, features]
+          properties:
+            type: { const: FeatureCollection }
+            features: { type: array, items: { type: object }, description: GeoJSON features. }
+        serviceToday: { type: [boolean, 'null'], description: False indicates a fallback service day; null means not known. }
+    Position:
+      type: object
+      required: [location, kind, measuredAt, receivedAt]
+      properties:
+        location: { $ref: '#/components/schemas/Point' }
+        kind: { type: string, enum: [gps, reported] }
+        measuredAt: { type: [string, 'null'], format: date-time, description: Null when the source does not publish measurement time. }
+        receivedAt: { type: [string, 'null'], format: date-time }
+    Arrival:
+      type: object
+      required: [operator, lineId, destination, raw, arrivalAt, observedAt, kind, vehicleId, position, occupancy, platform]
+      properties:
+        operator: { type: string }
+        lineId: { type: string }
+        destination: { type: [string, 'null'] }
+        raw: { type: [string, 'null'] }
+        arrivalAt: { type: [string, 'null'], format: date-time }
+        observedAt: { type: [string, 'null'], format: date-time }
+        kind: { type: string, enum: [realtime, scheduled] }
+        vehicleId: { type: [string, 'null'] }
+        position: { anyOf: [ { $ref: '#/components/schemas/Position' }, { type: 'null' } ] }
+        occupancy: { type: [string, 'null'] }
+        platform: { type: [string, 'null'] }
+    Vehicle:
+      type: object
+      required: [operator, lineId, vehicleId, destination, position]
+      properties:
+        operator: { type: string }
+        lineId: { type: string }
+        vehicleId: { type: [string, 'null'] }
+        destination: { type: [string, 'null'] }
+        position: { $ref: '#/components/schemas/Position' }
+    Metadata:
+      type: object
+      required: [source, fetchedAt]
+      properties:
+        source: { type: string, format: uri }
+        fetchedAt: { type: string, format: date-time }
+        failedVariants: { type: integer, minimum: 1, description: Number of route variants unavailable in this partial result. }
+    RealtimeMetadata:
+      allOf:
+        - { $ref: '#/components/schemas/Metadata' }
+        - type: object
+          required: [positions]
+          properties:
+            positions: { type: string, enum: [not_published, partial] }
+            feedAt: { type: string, format: date-time, description: Published timestamp of the Renfe vehicle feed when available. }
+    PageMetadata:
+      allOf:
+        - { $ref: '#/components/schemas/Metadata' }
+        - type: object
+          required: [total, limit, offset]
+          properties:
+            total: { type: integer }
+            limit: { type: integer }
+            offset: { type: integer }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }

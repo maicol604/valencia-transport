@@ -40,7 +40,7 @@ export function parseMetroArrivals(data, now = Date.now(), Parser = globalThis.D
 }
 
 export const metro = {
-  id: 'metro', name: 'Metrovalencia', color: '#77c5ff', symbol: 'M', kind: 'train', interval: 30000, speed: 30, preloadRoutes: true,
+  id: 'metro', name: 'Metrovalencia', color: '#c93f4b', symbol: 'M', kind: 'train', interval: 30000, speed: 30, preloadRoutes: true,
   description: 'Next arrivals from the Metrovalencia station board. Positions are estimated, not GPS; destination resolves direction where geometry allows it.',
   source: 'https://www.metrovalencia.es/es/consulta-mapas/',
   getNetwork: () => cache('network', 3600000, async () => {

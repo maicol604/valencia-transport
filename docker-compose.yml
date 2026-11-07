@@ -1,0 +1,33 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    restart: unless-stopped
+    environment:
+      API_KEYS: ${API_KEYS:?Configura API_KEYS en el archivo .env}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-}
+      API_RATE_LIMIT: ${API_RATE_LIMIT:-120}
+    networks:
+      - default
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8083}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      default: {}
+      proxy-net:
+        aliases:
+          - en-ruta-frontend
+
+networks:
+  proxy-net:
+    external: true
+    name: ${PROXY_NETWORK:-proxy-net}

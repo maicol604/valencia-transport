@@ -31,7 +31,7 @@ export function parseAtmvArrivals(data, now = Date.now()) {
 }
 
 export const atmv = {
-  id: 'atmv', name: 'ATMV · Met Go', color: '#ffa94d', symbol: 'A', kind: 'bus', interval: 30000, speed: 20, preloadRoutes: false,
+  id: 'atmv', name: 'ATMV · Met Go', color: '#a75119', symbol: 'A', kind: 'bus', interval: 30000, speed: 20, preloadRoutes: false,
   description: 'Met Go predictions and vehicle coordinates when published. The source does not timestamp those coordinates; otherwise the position is estimated.',
   source: 'https://metgovalencia.com/',
   getNetwork: () => cache('network', 3600000, async () => {
