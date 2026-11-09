@@ -15,7 +15,7 @@ const state = {
   stopLayers: new Map(), buses: new Map(), approaches: new Map(), selected: null, arrivals: [],
   activeLine: null, allRoutes: false, sheetExpanded: false, speed: 12, advancedSettings: false, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches,
   generation: 0, controller: null, poll: null, observedAt: null, lastError: '', busy: false,
-  routeFailures: new Set(), source: 'direct', routeRefresh: 0,
+  routeFailures: new Set(), source: 'direct', routeRefresh: 0, pendingVehicleFit: false,
   provider: providers.get('emt'), epoch: 0, networks: new Map(), contextStops: false, contextEpoch: 0,
 };
 
@@ -305,6 +305,7 @@ async function selectStop(stop) {
   if (!stop) return;
   state.generation++; state.controller?.abort(); clearTimeout(state.poll);
   state.selected = stop; state.arrivals = []; state.observedAt = null; state.lastError = ''; state.busy = false; state.sheetExpanded = false;
+  state.pendingVehicleFit = true;
   $('#workspace').classList.remove('is-stop-expanded');
   $('#workspace').classList.add('has-stop');
   state.activeLine = null; state.approaches.clear(); clearBuses(); selectionGroup.clearLayers();
@@ -395,6 +396,10 @@ async function loadStopRoutes(provider, stop, generation, incoming, signal) {
       syncBuses(); renderStop(); updateLayers();
     }
   }));
+  if (generation === state.generation && state.pendingVehicleFit) {
+    state.pendingVehicleFit = false;
+    fitBuses();
+  }
 }
 
 function clearBuses() { busGroup.clearLayers(); state.buses.clear(); }
@@ -498,6 +503,7 @@ function syncBuses() {
 }
 
 function drawBuses(now) {
+  const visibleBuses = [];
   for (const bus of state.buses.values()) {
     const age = now - bus.arrival.observedAt;
     const fraction = state.animate ? Math.min(1, (now - bus.changedAt) / 4000) : 1;
@@ -520,7 +526,25 @@ function drawBuses(now) {
         direction.dataset.heading = heading.toFixed(1);
       } else delete direction.dataset.heading;
       bus.marker.setOpacity(age > 45000 ? .5 : 1);
+      visibleBuses.push({ bus, point: map.latLngToLayerPoint(latlng(position)) });
     } else busGroup.removeLayer(bus.marker);
+  }
+  const clusters = [];
+  for (const item of visibleBuses) {
+    const cluster = clusters.find(group => group.some(other => item.point.distanceTo(other.point) < 28));
+    if (cluster) cluster.push(item); else clusters.push([item]);
+  }
+  for (const group of clusters) {
+    const ordered = group.slice().sort((a, b) => `${a.bus.arrival.line}-${a.bus.arrival.id}`.localeCompare(`${b.bus.arrival.line}-${b.bus.arrival.id}`, 'en', { numeric: true }));
+    ordered.forEach(({ bus }, index) => {
+      const element = bus.marker.getElement();
+      if (!element) return;
+      const angle = 2 * Math.PI * index / ordered.length - Math.PI / 4;
+      const shift = ordered.length > 1 ? [Math.round(Math.cos(angle) * 46), Math.round(Math.sin(angle) * 46)] : [0, 0];
+      const base = element.style.transform.replace(/\s+translate3d\([^)]*\)$/, '');
+      element.style.transform = shift[0] || shift[1] ? `${base} translate3d(${shift[0]}px, ${shift[1]}px, 0)` : base;
+      element.dataset.collisionCount = String(ordered.length);
+    });
   }
 }
 

@@ -49,6 +49,20 @@ test('suppressed segments and gaps never create imaginary street-spanning edges'
   assert.equal(positionOnApproach(approach, approach.offset + 5), null);
 });
 
+test('stop approaches extend across uniquely connected route fragments', () => {
+  const d = [-0.39, 39.47], e = [-0.4, 39.47];
+  const model = buildRoutes({ features: [
+    segment(1, 'P00000101', 'P00000201', [a, b]),
+    segment(2, 'P00000401', 'P00000501', [d, e]),
+    segment(3, 'P00000301', 'P00000101', [c, a]),
+  ] }, info);
+  const approach = approachForStop([model], { id: '2', coords: b });
+  const now = 100000;
+  const arrival = { observedAt: now, arrivalAt: now + 5 * 60000, programmed: false };
+  assert.ok(approach.offset > model.paths[0].length);
+  assert.ok(estimatePosition(approach, arrival, now, 12));
+});
+
 test('closed service cycles wrap once while open paths do not', () => {
   const path = measurePath([a, b, [-0.37, 39.48], a]);
   path.circular = true;

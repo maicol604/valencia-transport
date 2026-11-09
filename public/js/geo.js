@@ -116,7 +116,35 @@ export function approachForStop(models, stop) {
     const a = positionOnApproach(best, 100), b = positionOnApproach(m, 100);
     return a && b && distance(a, b) > 80;
   });
-  return ambiguous ? null : best;
+  return ambiguous ? null : extendApproach(best, models);
+}
+
+function samePath(a, b) {
+  return a.coords.length === b.coords.length && a.coords.every((point, i) => distance(point, b.coords[i]) < 0.2);
+}
+
+function extendApproach(approach, models) {
+  if (approach.path.circular) return approach;
+  const paths = models.flatMap(model => model.paths);
+  const chain = [approach.path];
+  let coords = approach.path.coords;
+  let circular = false;
+  for (let i = 0; i < paths.length; i++) {
+    const candidates = [];
+    for (const path of paths) {
+      if (chain.some(part => samePath(part, path)) || distance(path.coords.at(-1), coords[0]) >= 0.2) continue;
+      if (!candidates.some(candidate => samePath(candidate, path))) candidates.push(path);
+    }
+    if (candidates.length !== 1) break;
+    const previous = candidates[0];
+    chain.unshift(previous);
+    coords = [...previous.coords.slice(0, -1), ...coords];
+    if (distance(coords[0], coords.at(-1)) < 30) { circular = true; break; }
+  }
+  if (chain.length === 1) return approach;
+  const path = measurePath(coords);
+  path.circular = circular;
+  return { ...approach, path, offset: path.length - approach.path.length + approach.offset };
 }
 
 export function approachForPosition(models, stop, coords, maxGap = 120) {
