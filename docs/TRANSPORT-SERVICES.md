@@ -10,6 +10,7 @@ public/js/services/
   atmv.js           Met Go: paradas, líneas, shapes, ETA y coordenadas ALMEX
   metro.js          Metrovalencia: mapa embebido y próximas llegadas
   cercanias.js      Renfe: vinculación de GPS/ETA con viajes y estaciones
+   valenbisi.js      Valenbisi: estaciones y disponibilidad de bicicletas
   shapes.js         Utilidades de geometría para GTFS/mapas
   transport.js      Conexión directa/proxy y caché por proveedor
 
@@ -18,6 +19,7 @@ services/
   atmv.mjs          Proxy de endpoints públicos Met Go
   metro.mjs         Scraping HTTP de FGV, caché de mapa y cadena TLS
   cercanias.mjs     GTFS nacional → red de València; feeds GTFS-RT
+   valenbisi.mjs     Proxy autenticado de estaciones JCDecaux
   shared.mjs        HTTP, validación y caché
   index.mjs         Registro de handlers de backend
   gateway.mjs       Resolución a módulo local o proceso independiente
@@ -61,6 +63,17 @@ Cada entrada de `providers` expone:
 Para añadir o sustituir una fuente se modifica su adaptador y, si necesita intermediario, su handler; no es necesario reescribir la interfaz. Los errores de fuente se propagan al panel; una caída no se sustituye por datos simulados.
 
 ## Fuentes comprobadas
+
+### Valenbisi
+
+- Fuente de estaciones y disponibilidad: la página pública `https://www.valenbisi.es/es/mapping` y la respuesta que solicita su mapa.
+- Página pública de referencia y atribución: `https://www.valenbisi.es/es/mapping`.
+- El backend carga la página con Chromium y captura únicamente la respuesta de estaciones generada por el mapa; no se configura ni se distribuye una API key propia.
+- La imagen Docker instala Chromium y sus dependencias para que el scraper funcione igual en producción y en local.
+- La respuesta se normaliza a estaciones con `id`, `name`, `coords`, `capacity`, `availableBikes`, `availableDocks`, `status` y `lastUpdated`.
+- La caché del proxy dura 45 segundos y la interfaz consulta cada 60 segundos para no sobrecargar la fuente.
+- Las bicicletas no tienen ETA ni posición de vehículo: se muestran como disponibilidad actual de estación. La antigüedad del dato se conserva para futuras métricas.
+- Antes de un despliegue público o comercial hay que confirmar las condiciones de uso, límites y atribución de Valenbisi.
 
 ### EMT
 

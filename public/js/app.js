@@ -3,6 +3,7 @@ import { estimatePosition, distance, pointAt, approachForPosition } from './geo.
 import { adjustedArrivalAt, reconcileArrivals } from './arrivals.js';
 import { providers } from './services/index.js';
 import { configureTransport } from './services/transport.js';
+import { glyphPath, glyphSVG } from './icons.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -12,21 +13,47 @@ const normalize = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '')
 const state = {
   stops: [], lines: new Map(), models: new Map(), loading: new Map(), routeLayers: new Map(),
   stopLayers: new Map(), buses: new Map(), approaches: new Map(), selected: null, arrivals: [],
-  activeLine: null, allRoutes: false, sheetExpanded: false, speed: 12, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches,
+  activeLine: null, allRoutes: false, sheetExpanded: false, speed: 12, advancedSettings: false, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches,
   generation: 0, controller: null, poll: null, observedAt: null, lastError: '', busy: false,
   routeFailures: new Set(), source: 'direct', routeRefresh: 0,
   provider: providers.get('emt'), epoch: 0, networks: new Map(), contextStops: false, contextEpoch: 0,
 };
 
-const map = L.map('map', { zoomControl: true, preferCanvas: true, minZoom: 10, maxZoom: 19 }).setView([39.472, -0.370], 13);
-const stopRenderer = L.canvas({ pane: 'stops', tolerance: 12 });
+const map = L.map('map', { zoomControl: false, preferCanvas: true, minZoom: 10, maxZoom: 19 }).setView([39.472, -0.370], 13);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+const stopRenderer = L.canvas({ pane: 'stops', tolerance: 10 });
+const providerStyle = provider => `--provider-color:${provider.color};--provider-ink:${provider.ink || '#fff'}`;
+
+// Canvas circle with the operator pictogram: thousands of bus stops stay cheap to draw.
+const IconStop = L.CircleMarker.extend({
+  _updatePath() {
+    const renderer = this._renderer;
+    if (!renderer._drawing || this._empty()) return;
+    const ctx = renderer._ctx, { x, y } = this._point, radius = this._radius, options = this.options;
+    ctx.save();
+    ctx.globalAlpha = options.opacity;
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2);
+    if (radius >= 7) { ctx.shadowColor = 'rgba(15,26,42,.3)'; ctx.shadowBlur = 5; ctx.shadowOffsetY = 1.5; }
+    ctx.fillStyle = options.fillColor; ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.lineWidth = options.weight; ctx.strokeStyle = options.color; ctx.stroke();
+    if (radius >= 7 && options.glyph) {
+      const size = radius * 1.18;
+      ctx.translate(x - size / 2, y - size / 2); ctx.scale(size / 24, size / 24);
+      ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = options.ink;
+      ctx.stroke(glyphPath(options.glyph));
+    }
+    ctx.restore();
+  },
+});
+const stopRadius = (zoom, selected) => selected ? 13 : zoom <= 13 ? 3.5 : zoom === 14 ? 5 : zoom === 15 ? 9 : 11;
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
 }).on('tileerror', () => toast('El mapa base no está disponible. Comprueba tu conexión.')).addTo(map);
 map.createPane('routes'); map.getPane('routes').style.zIndex = 410;
 map.createPane('stops'); map.getPane('stops').style.zIndex = 430;
-map.createPane('vehicles'); map.getPane('vehicles').style.zIndex = 620;
+map.createPane('vehicles'); map.getPane('vehicles').style.zIndex = 660;
 map.createPane('selection'); map.getPane('selection').style.zIndex = 640;
 const stopGroup = L.layerGroup().addTo(map);
 const selectionGroup = L.layerGroup().addTo(map);
@@ -103,20 +130,19 @@ function updateLayers() {
     if (!visible && map.hasLayer(layer)) map.removeLayer(layer);
     if (highlighted && visible) layer.bringToFront();
   }
+  const zoom = map.getZoom();
+  map.getContainer().classList.toggle('zoom-far', zoom <= 14);
+  contextGroup.eachLayer(marker => {
+    if (marker.setStyle) { marker.setStyle({ opacity: .55, weight: zoom <= 14 ? 1.5 : 2.5 }); marker.setRadius(stopRadius(zoom, false)); }
+    else marker.setOpacity(.6);
+  });
   for (const [id, marker] of state.stopLayers) {
     const onLine = !state.activeLine || state.models.get(state.activeLine)?.some(m => m.stopIds.has(id));
     const selected = state.selected?.id === id;
-    const zoom = map.getZoom();
-    const cityScale = zoom <= 13;
-    const opacity = selected ? 1 : state.selected ? (onLine ? .78 : .32) : cityScale ? .88 : 1;
+    const opacity = selected ? 1 : state.selected ? (onLine ? .9 : .35) : 1;
     if (marker.setStyle) {
-      marker.setStyle({
-        color: '#ffffff', weight: selected ? 3 : cityScale ? 1.5 : 2,
-        fillColor: state.provider.color,
-        fillOpacity: selected ? 1 : state.selected ? (onLine ? .86 : .3) : cityScale ? .8 : .96,
-        opacity,
-      });
-      marker.setRadius?.(selected ? 9 : cityScale ? 4 : zoom >= 15 ? 7 : 6);
+      marker.setStyle({ opacity, weight: zoom <= 14 ? 1.5 : 2.5 });
+      marker.setRadius(stopRadius(zoom, selected));
     } else marker.setOpacity(opacity);
     const element = marker.getElement();
     if (element && !marker.setStyle) element.classList.toggle('is-selected', selected);
@@ -129,6 +155,8 @@ function updateLayers() {
 function updateStopNumberLabels() {
   const bounds = map.getBounds();
   const occupied = [];
+  const insets = mapInsets(), size = map.getSize();
+  const uncovered = point => point.y > insets.top - 20 && point.y < size.y - insets.bottom + 10 && point.x > (innerWidth >= 900 ? insets.left - 16 : 0);
   const markers = [...state.stopLayers.entries()].map(([id, marker]) => ({ id, marker, selected: state.selected?.id === id, context: false }));
   contextGroup.eachLayer(marker => { if (marker._stopLabel) markers.push({ marker, selected: false, context: true }); });
   markers.sort((first, second) => Number(second.selected) - Number(first.selected) || Number(first.context) - Number(second.context));
@@ -136,37 +164,72 @@ function updateStopNumberLabels() {
     const inView = bounds.contains(marker.getLatLng());
     let visible = selected && inView;
     const { stop, provider } = marker._stopLabel;
-    const showNearbyLabels = map.getZoom() >= (provider.kind === 'train' ? 15 : 16);
-    if (inView && (selected || showNearbyLabels)) {
+    const bike = provider.kind === 'bike';
+    const showNearbyLabels = map.getZoom() >= (provider.kind === 'bus' ? 16 : 15);
+    if (inView && (selected || (showNearbyLabels && (!state.selected || provider.kind !== 'bus')))) {
       const point = map.latLngToContainerPoint(marker.getLatLng());
-      const lines = (selected ? servingLines(stop) : stop.lines || []).slice(0, 4);
-      const width = Math.min(map.getSize().x <= 600 ? 235 : 265, 50 + stop.name.length * 6.5 + (provider.kind === 'bus' ? 38 : 0) + lines.length * 21);
+      const lines = bike ? [] : (selected ? servingLines(stop) : stop.lines || []).slice(0, 4);
+      const width = bike ? 86 : Math.min(map.getSize().x <= 600 ? 235 : 265, 56 + stop.name.length * 7 + (provider.kind === 'bus' ? 38 : 0) + lines.length * 22);
       const needsLeft = point.x + width + 15 > map.getSize().x;
       const vertical = needsLeft && point.x - width - 10 < 0;
       const direction = vertical ? (point.y > 60 ? 'top' : 'bottom') : needsLeft ? 'left' : 'right';
-      const left = vertical ? point.x - width / 2 : needsLeft ? point.x - width - 10 : point.x + 10;
+      const left = vertical ? point.x - width / 2 : needsLeft ? point.x - width - 10 : point.x + (bike ? 10 : -17);
       const box = { left, right: left + width, top: vertical ? point.y + (direction === 'top' ? -60 : 10) : point.y - 24, bottom: vertical ? point.y + (direction === 'top' ? -10 : 60) : point.y + 24 };
       marker.getTooltip().options.direction = direction;
-      marker.getTooltip().options.offset = direction === 'left' ? [-10, 0] : direction === 'right' ? [10, 0] : direction === 'top' ? [0, -10] : [0, 10];
-      if (selected || !occupied.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) {
+      // Rightward transit labels sit on the stop so their operator badge doubles as the marker.
+      marker.getTooltip().options.offset = direction === 'left' ? [-14, 0] : direction === 'right' ? [bike ? 14 : -23, 0] : direction === 'top' ? [0, -14] : [0, 14];
+      if (selected || (uncovered(point) && !occupied.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top))) {
         occupied.push(box); visible = true;
       }
-      const badges = lines.map(line => {
-        const routeColor = context ? state.networks.get(provider.id)?.lines.find(item => item.id === line)?.color : state.lines.get(line)?.color;
-        const safeColor = /^#[0-9a-f]{6}$/i.test(routeColor || '') ? routeColor : '#526575';
-        return `<span class="stop-label-line" style="background:${safeColor};color:${contrastColor(safeColor)}">${escape(line)}</span>`;
-      }).join('');
-      marker.setTooltipContent(`<span class="stop-label-operator" style="--operator-color:${provider.color}" aria-hidden="true">${escape(provider.symbol)}</span><span class="stop-label-copy">${provider.kind === 'bus' ? `<span class="stop-label-code">${escape(stop.id)}</span>` : ''}<span class="stop-label-name">${escape(stop.name)}</span></span>${badges ? `<span class="stop-label-lines">${badges}</span>` : ''}`);
+      marker.setTooltipContent(stopLabel(stop, provider, lines, context));
     }
     if (visible && !marker.isTooltipOpen()) marker.openTooltip();
     else if (!visible && marker.isTooltipOpen()) marker.closeTooltip();
     const tooltip = marker.getTooltip();
     if (tooltip && visible) {
       const onLine = !state.activeLine || state.models.get(state.activeLine)?.some(model => model.stopIds.has(id));
-      tooltip.setOpacity(selected ? 1 : context ? .58 : state.selected ? (onLine ? .78 : .32) : map.getZoom() <= 13 ? .88 : 1);
+      tooltip.setOpacity(selected || bike ? 1 : context ? .58 : state.selected ? (onLine ? .78 : .32) : map.getZoom() <= 13 ? .88 : 1);
       tooltip.getElement()?.classList.toggle('is-selected', selected);
     }
   }
+}
+
+const availabilityLevel = count => count == null ? 'var(--muted)' : count === 0 ? 'var(--bad)' : count <= 3 ? 'var(--warn)' : 'var(--ok)';
+const finite = value => Number.isFinite(value) ? value : null;
+const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z"/></svg>';
+let renderedBikesKey = '';
+function bikeRating(bike) {
+  // A bike without any user rating is unrated, not badly rated.
+  if (bike.rating == null || bike.ratingCount === 0) return { level: null, tone: 'none', label: 'Sin valoraciones' };
+  const maximum = Math.max(1, bike.ratingMax || 3), level = Math.max(0, Math.min(3, Math.round((bike.rating / maximum) * 3)));
+  return { level, tone: level === 3 ? 'good' : level === 2 ? 'fair' : 'poor', label: `${level} de 3 estrellas` };
+}
+function bikeRow(bike, index) {
+  const rating = bikeRating(bike);
+  const stars = [1, 2, 3].map(n => `<i class="${rating.level != null && n <= rating.level ? 'on' : ''}">${STAR}</i>`).join('');
+  const count = bike.ratingCount == null ? '' : bike.ratingCount === 0 ? 'Sin votos' : `${bike.ratingCount} ${bike.ratingCount === 1 ? 'voto' : 'votos'}`;
+  const date = bike.lastRevisionAt ? new Date(bike.lastRevisionAt).toLocaleDateString('es', { day: 'numeric', month: 'short' }) : null;
+  const review = bike.reviewed === true ? 'Revisada' : 'Pendiente de revisión';
+  return `<li class="bike-row tone-${rating.tone}" style="--i:${index}">
+    <span class="bike-row-icon" aria-hidden="true">${glyphSVG('bike')}</span>
+    <span class="bike-row-main"><strong>Bici ${escape(bike.id)}</strong><small>${bike.standNumber == null ? 'Anclaje –' : `Anclaje ${escape(bike.standNumber)}`}</small></span>
+    <span class="bike-row-rating" role="img" aria-label="${escape(rating.label)}"><span class="bike-stars">${stars}</span><small>${count}</small></span>
+    <span class="bike-review ${bike.reviewed === true ? 'is-reviewed' : ''}" title="${review}${date ? ` · última revisión ${date}` : ''}">${bike.reviewed === true ? 'Revisada' : 'Revisar'}${date ? `<small>${date}</small>` : ''}</span>
+  </li>`;
+}
+
+function stopLabel(stop, provider, lines, context) {
+  if (provider.kind === 'bike') {
+    const bikes = finite(stop.availableBikes), docks = finite(stop.availableDocks);
+    return `<span class="bike-count" style="--level:${availabilityLevel(bikes)}" title="Bicicletas disponibles">${bikes ?? '–'}</span><span class="bike-docks" title="Anclajes libres">${docks ?? '–'}</span>`;
+  }
+  const operator = `<span class="stop-label-operator" style="--operator-color:${provider.color};--operator-ink:${provider.ink || '#fff'}" aria-hidden="true">${glyphSVG(provider.glyph)}</span>`;
+  const badges = lines.map(line => {
+    const routeColor = context ? state.networks.get(provider.id)?.lines.find(item => item.id === line)?.color : state.lines.get(line)?.color;
+    const safeColor = /^#[0-9a-f]{6}$/i.test(routeColor || '') ? routeColor : '#526575';
+    return `<span class="stop-label-line" style="background:${safeColor};color:${contrastColor(safeColor)}">${escape(line)}</span>`;
+  }).join('');
+  return `${operator}<span class="stop-label-copy">${provider.kind === 'bus' ? `<span class="stop-label-code">${escape(stop.id)}</span>` : ''}<span class="stop-label-name">${escape(stop.name)}</span></span>${badges ? `<span class="stop-label-lines">${badges}</span>` : ''}`;
 }
 
 async function loadAllRoutes() {
@@ -205,12 +268,17 @@ function showStops() {
 }
 
 function stopMarker(stop, provider) {
-  const marker = provider.id === 'emt'
-    ? L.circleMarker(latlng(stop.coords), { pane: 'stops', renderer: stopRenderer, className: 'stop-marker', radius: 3, color: '#ffffff', weight: 1.5, fillColor: provider.color, fillOpacity: .8 })
-    : L.marker(latlng(stop.coords), { pane: 'stops', icon: L.divIcon({ className: `provider-stop provider-stop-${provider.id}`, iconSize: [40, 40], iconAnchor: [20, 20], html: `<span style="--provider-color:${provider.color}">${provider.symbol}</span>` }), title: `${provider.name} · ${stop.name}` });
+  const marker = provider.kind === 'train'
+    ? L.marker(latlng(stop.coords), { pane: 'stops', icon: L.divIcon({ className: `provider-stop provider-stop-${provider.id}`, iconSize: [40, 40], iconAnchor: [20, 20], html: `<span class="stop-pin" style="${providerStyle(provider)}">${glyphSVG(provider.glyph)}</span>` }), title: `${provider.name} · ${stop.name}` })
+    : new IconStop(latlng(stop.coords), { pane: 'stops', renderer: stopRenderer, className: `stop-marker provider-stop-${provider.id}`, radius: stopRadius(map.getZoom(), false), color: '#ffffff', weight: 2, opacity: 1, fillColor: provider.color, fillOpacity: 1, ink: provider.ink || '#fff', glyph: provider.glyph });
   marker._stopLabel = { stop, provider };
-  marker.bindTooltip(escape(provider.id === 'emt' || provider.id === 'atmv' ? stop.id : stop.name), { permanent: true, interactive: true, direction: 'right', offset: [10, 0], className: `stop-map-label${provider.id === 'emt' ? ' stop-number-tooltip' : ''}` });
+  marker.bindTooltip(escape(provider.kind === 'bus' ? stop.id : stop.name), { permanent: true, interactive: true, direction: 'right', offset: [14, 0], className: `stop-map-label${provider.id === 'emt' ? ' stop-number-tooltip' : ''}${provider.kind === 'bike' ? ' is-bike' : ''}` });
   marker.off('add', marker._openTooltip);
+  // Leaflet does not forward tooltip clicks to canvas layers; labels must act as the stop button.
+  marker.on('tooltipopen', ({ tooltip }) => {
+    const element = tooltip.getElement();
+    if (element && !element._selectsStop) { element._selectsStop = true; L.DomEvent.on(element, 'click', event => { L.DomEvent.stop(event); if (marker.isTooltipOpen()) marker.fire('click'); }); }
+  });
   return marker;
 }
 
@@ -238,16 +306,43 @@ async function selectStop(stop) {
   state.generation++; state.controller?.abort(); clearTimeout(state.poll);
   state.selected = stop; state.arrivals = []; state.observedAt = null; state.lastError = ''; state.busy = false; state.sheetExpanded = false;
   $('#workspace').classList.remove('is-stop-expanded');
+  $('#workspace').classList.add('has-stop');
   state.activeLine = null; state.approaches.clear(); clearBuses(); selectionGroup.clearLayers();
-  $('#search-results').hidden = true; $('#search').value = '';
-  const selectionColor = state.provider.color;
-  L.circleMarker(latlng(stop.coords), { pane: 'selection', radius: 18, color: selectionColor, weight: 3, fillColor: selectionColor, fillOpacity: .16 }).addTo(selectionGroup);
-  L.circleMarker(latlng(stop.coords), { pane: 'selection', radius: 7, color: '#ffffff', weight: 3, fillColor: selectionColor, fillOpacity: 1 }).addTo(selectionGroup);
+  $('#search-results').hidden = true; $('#search').value = ''; $('#search').blur();
+  L.marker(latlng(stop.coords), { pane: 'selection', interactive: false, keyboard: false, icon: L.divIcon({ className: 'selection-ring', iconSize: [56, 56], iconAnchor: [28, 28], html: `<span style="--ring:${state.provider.color}"></span>` }) }).addTo(selectionGroup);
   for (const [line, models] of state.models) state.approaches.set(line, state.provider.getApproach(models, stop));
   const url = new URL(location.href); url.searchParams.set('stop', stop.id); url.searchParams.set('provider', state.provider.id); history.replaceState(null, '', url);
-  map.flyTo(latlng(stop.coords), Math.max(map.getZoom(), 16), { duration: .7, animate: state.animate });
   renderLineList(); renderStop(); updateLayers();
+  const zoom = Math.max(map.getZoom(), 16);
+  map.flyTo(visibleCenter(latlng(stop.coords), zoom), zoom, { duration: .7, animate: state.animate });
   await refreshArrivals();
+}
+
+// Map area not covered by the floating search, panel and dock.
+function mapInsets() {
+  const sheet = $('#sheet').getBoundingClientRect(), top = $('.topbar').getBoundingClientRect();
+  if (innerWidth >= 900) return { left: sheet.right + 16, top: 24, right: 80, bottom: 24 };
+  return { left: 16, top: top.bottom + 12, right: 64, bottom: innerHeight - sheet.top + 16 };
+}
+function visibleCenter(target, zoom) {
+  const insets = mapInsets();
+  const point = map.project(target, zoom).subtract([(insets.left - insets.right) / 2, (insets.top - insets.bottom) / 2]);
+  return map.unproject(point, zoom);
+}
+
+function clearSelection() {
+  state.generation++; state.controller?.abort(); clearTimeout(state.poll);
+  state.selected = null; state.arrivals = []; state.observedAt = null; state.lastError = ''; state.busy = false; state.activeLine = null;
+  state.sheetExpanded = false; state.approaches.clear(); clearBuses(); selectionGroup.clearLayers();
+  $('#workspace').classList.remove('is-stop-expanded', 'has-stop');
+  const url = new URL(location.href); url.searchParams.delete('stop'); history.replaceState(null, '', url);
+  connection(`${state.provider.name} · red conectada`);
+  renderIdle(); renderLineList(); updateLayers();
+}
+
+function renderIdle() {
+  const provider = state.provider;
+  $('#stop-panel').innerHTML = `<div class="idle"><span class="idle-icon" style="${providerStyle(provider)}" aria-hidden="true">${glyphSVG(provider.glyph)}</span><div><strong>${provider.kind === 'bike' ? 'Elige una estación' : 'Elige una parada'}</strong><p>Tócala en el mapa o búscala por nombre o número.</p></div></div>`;
 }
 
 function schedulePoll() {
@@ -316,23 +411,22 @@ function arrivalApproach(arrival) {
   return arrival._approach;
 }
 
-function vehicleHeading(approach, arrival, now) {
+function vehicleHeading(approach) {
   const path = approach?.path;
   if (!path?.length || !Number.isFinite(approach.offset)) return null;
-  const distanceToStop = Number.isFinite(approach.vehicleDistance)
-    ? approach.vehicleDistance
-    : arrival.arrivalAt == null ? null : Math.max(0, (arrival.arrivalAt - now) / 1000 * state.speed / 3.6);
-  if (distanceToStop == null) return null;
-
-  let currentOffset = approach.offset - distanceToStop;
-  if (path.circular) currentOffset = (currentOffset % path.length + path.length) % path.length;
-  else if (currentOffset < 0 || currentOffset > path.length) return null;
-  const step = path.circular ? 20 : Math.min(20, currentOffset);
+  const center = path.circular ? (approach.offset % path.length + path.length) % path.length : Math.max(0, Math.min(path.length, approach.offset));
+  const step = Math.min(20, path.length / 2);
   if (step < 1) return null;
-  let nextOffset = currentOffset + step;
-  if (path.circular) nextOffset = (nextOffset % path.length + path.length) % path.length;
-
-  const from = pointAt(path, currentOffset), to = pointAt(path, nextOffset);
+  let fromOffset = center - step;
+  let toOffset = center + step;
+  if (path.circular) {
+    fromOffset = (fromOffset % path.length + path.length) % path.length;
+    toOffset = (toOffset % path.length + path.length) % path.length;
+  } else {
+    fromOffset = Math.max(0, fromOffset);
+    toOffset = Math.min(path.length, toOffset);
+  }
+  const from = pointAt(path, fromOffset), to = pointAt(path, toOffset);
   if (!from || !to) return null;
   const start = map.latLngToLayerPoint(latlng(from));
   const end = map.latLngToLayerPoint(latlng(to));
@@ -354,12 +448,18 @@ function positionNote(arrival) {
   return `Estimación · ≈ ${(Math.max(0, arrival.arrivalAt - Date.now()) / 1000 * state.speed / 3600).toFixed(1)} km`;
 }
 
+function blendCoords(from, to, fraction) {
+  if (!from || !to) return to || from;
+  const progress = Math.max(0, Math.min(1, fraction));
+  return [from[0] + (to[0] - from[0]) * progress, from[1] + (to[1] - from[1]) * progress];
+}
+
 function busIcon(line) {
   const code = String(line);
-  const width = Math.max(66, Math.min(120, 48 + code.length * 9));
+  const width = Math.max(72, Math.min(130, 58 + code.length * 10));
   const mode = state.provider.id === 'metro' ? 'metro' : state.provider.kind === 'train' ? 'train' : 'bus';
   return L.divIcon({ className: `bus-icon bus-icon-${mode}`, iconSize: [width, 40], iconAnchor: [20, 20],
-    html: `<span class="vehicle-badge" style="--route-color:${color(line)};--route-ink:${contrastColor(color(line))};--badge-width:${width}px"><span class="vehicle-disc"><span class="vehicle-direction" hidden aria-hidden="true"></span><span class="vehicle-mode" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="16" rx="3"></rect><path d="M5 11h14M8 19v2m8-2v2M8 15h.01M16 15h.01"></path></svg></span></span><span class="vehicle-code">${escape(code)}</span></span>` });
+    html: `<span class="vehicle-badge" style="--route-color:${color(line)};--route-ink:${contrastColor(color(line))};--badge-width:${width}px"><span class="vehicle-disc"><span class="vehicle-direction" hidden aria-hidden="true"></span><span class="vehicle-mode" aria-hidden="true">${glyphSVG(state.provider.glyph)}</span></span><span class="vehicle-code">${escape(code)}</span></span>` });
 }
 
 function syncBuses() {
@@ -379,10 +479,16 @@ function syncBuses() {
     if (old) {
       const fraction = Math.min(1, (now - old.changedAt) / 4000);
       old.fromArrivalAt = old.fromArrivalAt + (old.arrival.arrivalAt - old.fromArrivalAt) * fraction;
+      if (arrival.position) {
+        old.positionFrom = old.currentPosition || old.positionTo || position;
+        old.positionTo = position;
+        old.positionChangedAt = now;
+      }
       old.arrival = arrival; old.changedAt = now; old.approach = approach;
+      old.heading = vehicleHeading(approach) ?? old.heading;
     } else {
       const marker = L.marker(latlng(position), { pane: 'vehicles', icon: busIcon(arrival.line), title: `${state.provider.name}, ${arrival.position ? 'posición publicada' : 'posición estimada'}, línea ${arrival.line}, ${arrival.destination}`, riseOnHover: true });
-      state.buses.set(arrival.id, { marker, arrival, approach, fromArrivalAt: arrival.arrivalAt, changedAt: now });
+      state.buses.set(arrival.id, { marker, arrival, approach, heading: vehicleHeading(approach), positionFrom: position, positionTo: position, positionChangedAt: now, currentPosition: position, fromArrivalAt: arrival.arrivalAt, changedAt: now });
     }
     const bus = state.buses.get(arrival.id);
     bus.marker.bindPopup(`<strong>${escape(state.provider.name)} · ${escape(arrival.line)} → ${escape(arrival.destination)}</strong><br>Hacia ${escape(state.selected.name)}<br>${escape(positionNote(arrival))}<br><small>Previsión: ${escape(arrival.raw)}${arrival.vehicleId ? ` · Vehículo ${escape(arrival.vehicleId)}` : ''}${arrival.platform ? ` · Andén ${escape(arrival.platform)}` : ''}</small>`);
@@ -397,15 +503,17 @@ function drawBuses(now) {
     const fraction = state.animate ? Math.min(1, (now - bus.changedAt) / 4000) : 1;
     const arrival = { ...bus.arrival, arrivalAt: bus.fromArrivalAt + (bus.arrival.arrivalAt - bus.fromArrivalAt) * fraction };
     const clock = state.animate ? now : bus.arrival.observedAt;
-    const position = bus.arrival.position ? arrivalPosition(bus.arrival, now, bus.approach)
+    let position = bus.arrival.position ? arrivalPosition(bus.arrival, now, bus.approach)
       : age <= 90000 && now <= bus.arrival.arrivalAt + 15000 ? estimatePosition(bus.approach, arrival, clock, state.speed) : null;
+    if (position && bus.arrival.position) position = blendCoords(bus.positionFrom, position, (now - bus.positionChangedAt) / 4000);
     const visible = position && (!state.activeLine || state.activeLine === bus.arrival.line);
     if (visible) {
+      bus.currentPosition = position;
       bus.marker.setLatLng(latlng(position));
       if (!busGroup.hasLayer(bus.marker)) bus.marker.addTo(busGroup);
       bus.marker.getElement().dataset.positionKind = bus.arrival.position?.kind || 'estimated';
       const direction = bus.marker.getElement().querySelector('.vehicle-direction');
-      const heading = vehicleHeading(bus.approach, bus.arrival, now);
+      const heading = bus.heading;
       direction.hidden = heading == null;
       if (heading != null) {
         direction.style.setProperty('--heading', `${heading}deg`);
@@ -447,20 +555,50 @@ function etaLabel(arrival) {
 function renderStop() {
   if (!state.selected) return;
   const stop = state.selected, lines = servingLines(stop);
+  const bike = state.provider.kind === 'bike';
+  const toggleLabel = state.sheetExpanded ? 'Ocultar' : bike ? 'Disponibilidad' : 'Llegadas';
+  const heading = `<div class="stop-heading"><span class="stop-symbol" style="${providerStyle(state.provider)}" aria-hidden="true">${glyphSVG(state.provider.glyph)}</span><div class="stop-heading-copy"><span class="stop-code">${bike ? 'Estación' : `Parada ${escape(stop.id)}`} · ${escape(state.provider.name)}</span><h2 id="stop-name">${escape(stop.name)}</h2></div><div class="stop-actions"><button id="stop-panel-toggle" class="sheet-toggle" aria-expanded="${state.sheetExpanded}" aria-controls="arrival-content"><span>${toggleLabel}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button><button id="stop-close" class="sheet-toggle" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button></div></div>`;
+  const updateInfo = `<div class="update-info"><span id="updated-age">${state.observedAt ? 'Actualizado ahora' : 'Esperando datos'}</span><span>Cada ${state.provider.interval / 1000} s</span></div>`;
+  const refresh = `<button id="refresh" class="text-button" ${state.busy ? 'disabled' : ''} aria-label="Actualizar">Actualizar</button>`;
+  if (bike) {
+    const available = finite(stop.availableBikes), docks = finite(stop.availableDocks), capacity = finite(stop.capacity);
+    const bikes = (Array.isArray(stop.bikes) ? stop.bikes : []).slice().sort((a, b) => (a.standNumber ?? 999) - (b.standNumber ?? 999));
+    const status = stop.status && stop.status !== 'open' ? `Estado: ${escape(stop.status)}` : 'Estación operativa';
+    const updated = stop.lastUpdated ? new Date(stop.lastUpdated).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : null;
+    const bikesKey = `${stop.id}:${bikes.map(bike => `${bike.id}@${bike.standNumber}`).join(',')}`;
+    const entering = bikes.length && bikesKey !== renderedBikesKey;
+    if (bikes.length) renderedBikesKey = bikesKey;
+    const tones = bikes.reduce((total, bike) => { total[bikeRating(bike).tone]++; return total; }, { good: 0, fair: 0, poor: 0, none: 0 });
+    const toneSummary = bikes.length ? `<span class="bike-tones">${[['good', 'buenas'], ['fair', 'regulares'], ['poor', 'malas']].filter(([tone]) => tones[tone]).map(([tone, label]) => `<span class="tone-${tone}" title="${tones[tone]} ${label}"><i></i>${tones[tone]}</span>`).join('')}</span>` : '';
+    const bikeList = bikes.length
+      ? `<ul class="bike-list${entering ? ' is-entering' : ''}">${bikes.map(bikeRow).join('')}</ul>`
+      : stop.bikes === undefined && state.busy
+        ? `<ul class="bike-list is-loading" aria-label="Cargando bicicletas">${'<li class="bike-row skeleton"></li>'.repeat(Math.min(3, available || 2))}</ul>`
+        : `<p class="bike-empty">${stop.bikesError ? 'No se pudo actualizar la información de bicicletas.' : available === 0 ? 'No hay bicicletas ancladas ahora.' : 'Valoraciones no disponibles en este momento.'}</p>`;
+    const bikeFreshness = bikes.length && (stop.bikesStale || stop.bikesError)
+      ? '<p class="bike-freshness" role="status">Mostrando la última información disponible; no se pudo actualizar.</p>' : '';
+    $('#stop-panel').innerHTML = `${heading}
+      <button class="sheet-summary" data-expand><span class="bike-count" style="--level:${availabilityLevel(available)}">${available ?? '–'}</span><span class="sheet-summary-copy">bicis disponibles<small>${docks ?? '–'} anclajes libres</small></span></button>
+      <div id="arrival-content" class="arrival-content"><div class="bike-status"><div class="is-bikes" style="--level:${availabilityLevel(available)}"><strong>${available ?? '–'}</strong><span>bicis disponibles</span></div><div><strong>${docks ?? '–'}</strong><span>parking libre${capacity == null ? '' : ` de ${capacity}`}</span></div></div><div class="section-heading"><h3>Estado de las bicis</h3>${toneSummary}</div>${bikeFreshness}${bikeList}
+      <div class="section-heading"><h3>Estado</h3>${refresh}</div><p class="muted">${status}${updated ? ` · Dato de la fuente: ${updated}` : ''}</p>${state.lastError ? `<div class="notice error" role="alert">${escape(state.lastError)}</div>` : ''}${updateInfo}</div>`;
+    $('#workspace').classList.toggle('is-stop-expanded', state.sheetExpanded);
+    return;
+  }
   const arrivals = state.arrivals.filter(a => !state.activeLine || a.line === state.activeLine);
-  const nextArrival = arrivals[0];
-  const nextSummary = nextArrival ? `<span>Próxima llegada</span><strong>${etaLabel(nextArrival)}</strong><span>${escape(nextArrival.line)} · ${escape(nextArrival.destination)}</span>` : `<span>${state.busy ? 'Consultando llegadas' : 'Sin llegadas disponibles ahora'}</span>`;
-  $('#stop-panel').innerHTML = `<div class="stop-heading"><span class="stop-symbol" style="--provider-color:${state.provider.color}" aria-hidden="true">${state.provider.symbol}</span><div class="stop-heading-copy"><span class="stop-code">PARADA ${escape(stop.id)} · ${escape(state.provider.name)}</span><h2 id="stop-name">${escape(stop.name)}</h2></div><button id="stop-panel-toggle" class="sheet-toggle" aria-expanded="${state.sheetExpanded}" aria-controls="arrival-content"><span>${state.sheetExpanded ? 'Ocultar' : 'Llegadas'}</span><span aria-hidden="true">${state.sheetExpanded ? '⌄' : '⌃'}</span></button></div>
-    <div class="sheet-summary">${nextSummary}</div>
-    <div id="arrival-content" class="arrival-content"><div class="stop-lines">${lines.map(chip).join('')}</div>
-    <div class="section-heading"><h3>PRÓXIMAS LLEGADAS${state.activeLine ? ` · ${escape(state.activeLine)}` : ''}</h3><button id="refresh" class="text-button" ${state.busy ? 'disabled' : ''} aria-label="Actualizar llegadas">↻ Actualizar</button></div>
+  const next = arrivals[0];
+  const routeStyle = line => `--route-color:${color(line)};--route-ink:${contrastColor(color(line))}`;
+  const summary = next
+    ? `<button class="sheet-summary" data-expand style="${routeStyle(next.line)}"><span class="route-badge">${escape(next.line)}</span><span class="sheet-summary-copy">${escape(next.destination)}<small>Próxima llegada</small></span><span class="eta" data-eta-for="${escape(next.id)}">${etaLabel(next)}</span></button>`
+    : `<div class="sheet-summary is-empty">${state.busy ? 'Consultando llegadas…' : state.lastError ? 'No se han podido consultar las llegadas' : 'Sin llegadas previstas ahora'}</div>`;
+  $('#stop-panel').innerHTML = `${heading}${summary}
+    <div id="arrival-content" class="arrival-content">${lines.length ? `<div class="stop-lines">${lines.map(chip).join('')}</div>` : ''}
+    <div class="section-heading"><h3>Próximas llegadas${state.activeLine ? ` · ${escape(state.activeLine)}` : ''}</h3>${refresh}</div>
     ${state.lastError ? `<div class="notice error" role="alert">${escape(state.lastError)}${state.observedAt ? '<br>Se muestra la última consulta; las posiciones caducan a los 90 s.' : ''}</div>` : ''}
     <div class="arrival-list">${arrivals.map(arrival => {
       const position = arrivalPosition(arrival);
-      return `<article class="arrival-card" style="--route-color:${color(arrival.line)};--route-ink:${contrastColor(color(arrival.line))}" data-arrival="${escape(arrival.id)}"><div class="arrival-main"><span class="route-badge">${escape(arrival.line)}</span><div class="arrival-destination">${escape(arrival.destination)}<small>${arrival.occupancy ? `Ocupación: ${escape(arrival.occupancy)}` : 'Dirección'}</small></div><span class="eta">${etaLabel(arrival)}</span></div><div class="arrival-meta"><span data-position-note>${position ? positionNote(arrival) : reason(arrival)}</span><button data-bus="${escape(arrival.id)}" ${position ? '' : 'hidden'}>Ver en mapa ↗</button></div></article>`;
-    }).join('') || (!state.lastError ? `<div class="empty-state"><p>${state.busy ? 'Consultando las próximas llegadas…' : state.activeLine ? 'Sin previsiones disponibles para esta línea.' : 'La fuente no publica llegadas o vehículos asociados a esta parada en este momento.'}</p></div>` : '')}</div>
-    <div class="update-info"><span id="updated-age">${state.observedAt ? 'Actualizado ahora' : 'Esperando datos'}</span><span>Consulta cada ${state.provider.interval / 1000} s</span></div>
-    ${lines.length && !state.activeLine ? `<p class="muted">${lines.filter(line => !state.arrivals.some(a => a.line === line)).length ? 'También se muestran líneas sin previsión de llegada en sus recorridos vigentes.' : 'Pulsa una línea para destacar su recorrido.'}</p>` : ''}</div>`;
+      return `<article class="arrival-card" style="${routeStyle(arrival.line)}" data-arrival="${escape(arrival.id)}"><div class="arrival-main"><span class="route-badge">${escape(arrival.line)}</span><div class="arrival-destination">${escape(arrival.destination)}${arrival.occupancy ? `<small>Ocupación: ${escape(arrival.occupancy)}</small>` : arrival.platform ? `<small>Andén ${escape(arrival.platform)}</small>` : ''}</div><span class="eta">${etaLabel(arrival)}</span></div><div class="arrival-meta"><span data-position-note>${position ? positionNote(arrival) : reason(arrival)}</span><button data-bus="${escape(arrival.id)}" ${position ? '' : 'hidden'}>Ver en mapa</button></div></article>`;
+    }).join('') || (!state.lastError ? `<div class="empty-state"><p>${state.busy ? 'Consultando las próximas llegadas…' : state.activeLine ? 'Sin previsiones para esta línea.' : 'La fuente no publica llegadas para esta parada ahora mismo.'}</p></div>` : '')}</div>
+    ${updateInfo}</div>`;
   $('#workspace').classList.toggle('is-stop-expanded', state.sheetExpanded);
 }
 
@@ -468,10 +606,8 @@ function setStopPanelExpanded(expanded) {
   state.sheetExpanded = expanded;
   $('#workspace').classList.toggle('is-stop-expanded', expanded);
   $('#stop-panel-toggle')?.setAttribute('aria-expanded', String(expanded));
-  const label = $('#stop-panel-toggle span');
-  if (label) label.textContent = expanded ? 'Ocultar' : 'Llegadas';
-  $('#stop-panel-toggle span:last-child').textContent = expanded ? '⌄' : '⌃';
-  requestAnimationFrame(() => map.invalidateSize({ pan: false }));
+  const label = $('#stop-panel-toggle > span');
+  if (label) label.textContent = expanded ? 'Ocultar' : state.provider.kind === 'bike' ? 'Disponibilidad' : 'Llegadas';
 }
 
 function renderLineList() { $('#line-list').innerHTML = [...state.lines.keys()].sort(sortLines).map(chip).join(''); }
@@ -485,7 +621,7 @@ async function selectLine(line) {
       await loadLine(line);
       if (state.epoch === epoch && state.activeLine === line) {
         const bounds = state.routeLayers.get(line)?.getBounds();
-        if (bounds?.isValid()) map.fitBounds(bounds, { padding: [55, 55], maxZoom: 15, animate: state.animate });
+        if (bounds?.isValid()) { const insets = mapInsets(); map.fitBounds(bounds, { paddingTopLeft: [insets.left, insets.top], paddingBottomRight: [insets.right, insets.bottom], maxZoom: 15, animate: state.animate }); }
         syncBuses(); renderStop();
       }
     } catch (error) { if (state.epoch === epoch) toast(error.message); }
@@ -495,7 +631,7 @@ async function selectLine(line) {
 function fitBuses() {
   const points = [...state.buses.values()].filter(b => busGroup.hasLayer(b.marker)).map(b => b.marker.getLatLng());
   if (state.selected) points.push(latlng(state.selected.coords));
-  if (points.length) map.fitBounds(L.latLngBounds(points), { padding: [65, 65], maxZoom: 16, animate: state.animate });
+  if (points.length) { const insets = mapInsets(); map.fitBounds(L.latLngBounds(points), { paddingTopLeft: [insets.left + 20, insets.top + 20], paddingBottomRight: [insets.right + 20, insets.bottom + 20], maxZoom: 16, animate: state.animate }); }
   else map.setView([39.472, -0.370], 13);
 }
 
@@ -505,7 +641,7 @@ function searchStops() {
   if (!query) { results.hidden = true; return; }
   const matches = state.stops.filter(stop => stop.id.includes(query) || normalize(stop.name).includes(query))
     .sort((a, b) => (b.id === query) - (a.id === query) || a.name.localeCompare(b.name)).slice(0, 12);
-  results.innerHTML = matches.map(stop => `<button class="search-result" data-stop="${escape(stop.id)}"><strong>${escape(stop.id)}</strong><span>${escape(stop.name)}</span></button>`).join('') || '<p>No encontramos esa parada.</p>';
+  results.innerHTML = matches.map(stop => `<button class="search-result" data-stop="${escape(stop.id)}" style="${providerStyle(state.provider)}"><strong>${state.provider.kind === 'bike' ? glyphSVG('bike') : escape(stop.id)}</strong><span>${escape(stop.name)}</span></button>`).join('') || '<p>No encontramos esa parada.</p>';
   results.hidden = false;
 }
 
@@ -519,7 +655,11 @@ document.addEventListener('keydown', event => {
   if (event.key === '/' && !['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName) && !$('#settings').open) { event.preventDefault(); $('#search').focus(); }
 });
 document.addEventListener('click', event => {
-  if (event.target.closest('#stop-panel-toggle')) { setStopPanelExpanded(!state.sheetExpanded); return; }
+  if (event.target.closest('#stop-panel-toggle') || event.target.closest('[data-expand]')) { setStopPanelExpanded(!state.sheetExpanded); return; }
+  if (event.target.closest('#stop-close')) { clearSelection(); return; }
+  const mode = event.target.closest('[data-provider]');
+  if (mode) { if (mode.dataset.provider !== state.provider.id) switchProvider(mode.dataset.provider); return; }
+  if (!event.target.closest('.topbar')) $('#search-results').hidden = true;
   const stop = event.target.closest('[data-stop]');
   if (stop) selectStop(state.stops.find(s => s.id === stop.dataset.stop));
   const line = event.target.closest('[data-line]');
@@ -543,6 +683,10 @@ $('#speed').addEventListener('input', event => {
   state.speed = Number(event.target.value); $('#speed-value').value = state.speed;
   syncBuses(); renderStop(); saveSettings();
 });
+function updateAdvancedSettings() {
+  $('#advanced-settings-panel').hidden = !state.advancedSettings;
+}
+$('#advanced-settings').addEventListener('change', event => { state.advancedSettings = event.target.checked; updateAdvancedSettings(); saveSettings(); });
 $('#animate').addEventListener('change', event => { state.animate = event.target.checked; saveSettings(); drawBuses(Date.now()); });
 $('#transport').addEventListener('change', event => {
   setTransport(event.target.value); configureTransport(event.target.value); saveSettings();
@@ -553,8 +697,8 @@ $('#locate').addEventListener('click', () => {
   navigator.geolocation.getCurrentPosition(position => {
     const coords = [position.coords.longitude, position.coords.latitude];
     if (locationMarker) map.removeLayer(locationMarker);
-    locationMarker = L.circleMarker(latlng(coords), { radius: 7, color: '#fff', fillColor: '#7dbaf5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
-    map.setView(latlng(coords), 16);
+    locationMarker = L.circleMarker(latlng(coords), { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
+    map.setView(visibleCenter(latlng(coords), 16), 16);
     const nearest = [...state.stops].sort((a, b) => distance(a.coords, coords) - distance(b.coords, coords))[0];
     if (nearest) toast(`Parada más cercana: ${nearest.id} · ${nearest.name} (${Math.round(distance(nearest.coords, coords))} m)`);
   }, () => toast('No se ha podido obtener tu ubicación. Puedes buscar una parada.'), { timeout: 10000, maximumAge: 60000 });
@@ -562,6 +706,39 @@ $('#locate').addEventListener('click', () => {
 map.on('zoomend', updateLayers);
 map.on('moveend', updateStopNumberLabels);
 new ResizeObserver(() => map.invalidateSize()).observe($('#map'));
+new ResizeObserver(() => {
+  const app = $('#workspace');
+  app.style.setProperty('--sheet-h', `${$('#sheet').offsetHeight}px`);
+  app.style.setProperty('--dock-h', `${$('#modebar').offsetHeight}px`);
+}).observe($('#sheet'));
+
+// Drag the sheet continuously, then settle it into its expanded or collapsed state.
+let dragStart = null;
+const sheet = $('#sheet');
+sheet.addEventListener('pointerdown', event => {
+  if (!event.target.closest('.sheet-handle, .sheet-context, .stop-heading-copy, .stop-symbol')) return;
+  if (!state.selected) return;
+  dragStart = { y: event.clientY, target: event.target, moved: false };
+  sheet.classList.add('is-dragging');
+  sheet.setPointerCapture?.(event.pointerId);
+});
+sheet.addEventListener('pointermove', event => {
+  if (!dragStart) return;
+  const delta = event.clientY - dragStart.y;
+  if (Math.abs(delta) > 4) dragStart.moved = true;
+  sheet.style.transform = `translateY(${Math.max(-260, Math.min(260, delta))}px)`;
+  event.preventDefault();
+});
+sheet.addEventListener('pointerup', event => {
+  if (!dragStart) return;
+  const { y, target, moved } = dragStart;
+  const delta = event.clientY - y; dragStart = null;
+  sheet.classList.remove('is-dragging'); sheet.style.removeProperty('transform');
+  if (delta < -24) setStopPanelExpanded(true);
+  else if (delta > 24) { if (state.sheetExpanded) setStopPanelExpanded(false); else clearSelection(); }
+  else if (!moved && target.closest('.sheet-handle')) setStopPanelExpanded(!state.sheetExpanded);
+});
+sheet.addEventListener('pointercancel', () => { dragStart = null; sheet.classList.remove('is-dragging'); sheet.style.removeProperty('transform'); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) clearTimeout(state.poll);
   else { if (!state.busy) refreshArrivals(); if (Date.now() - state.routeRefresh > 600000 && !state.loading.size) loadAllRoutes(); }
@@ -573,15 +750,16 @@ setInterval(() => {
 }, 60000);
 
 function saveSettings() {
-  try { localStorage.setItem('enruta-settings', JSON.stringify({ speed: state.speed, animate: state.animate, transport: $('#transport').value })); } catch { /* Storage may be disabled. */ }
+  try { localStorage.setItem('enruta-settings', JSON.stringify({ speed: state.speed, advancedSettings: state.advancedSettings, animate: state.animate, transport: $('#transport').value })); } catch { /* Storage may be disabled. */ }
 }
 try {
   const stored = JSON.parse(localStorage.getItem('enruta-settings') || '{}');
   if (stored.speed >= 6 && stored.speed <= 30) state.speed = Number(stored.speed);
+  if (typeof stored.advancedSettings === 'boolean') state.advancedSettings = stored.advancedSettings;
   if (typeof stored.animate === 'boolean') state.animate = stored.animate;
   if (['auto', 'direct', 'proxy'].includes(stored.transport)) $('#transport').value = stored.transport;
 } catch { /* Use defaults if storage is unavailable. */ }
-$('#speed').value = state.speed; $('#speed-value').value = state.speed; $('#animate').checked = state.animate;
+$('#speed').value = state.speed; $('#speed-value').value = state.speed; $('#advanced-settings').checked = state.advancedSettings; $('#animate').checked = state.animate; updateAdvancedSettings();
 setTransport($('#transport').value, source => { state.source = source; });
 configureTransport($('#transport').value, source => { state.source = source; });
 
@@ -593,6 +771,8 @@ setInterval(() => {
     if (age > 90) connection('Datos antiguos', 'error');
   }
   for (const arrival of state.arrivals) {
+    const summary = document.querySelector(`[data-eta-for="${CSS.escape(arrival.id)}"]`);
+    if (summary) summary.innerHTML = etaLabel(arrival);
     const card = document.querySelector(`[data-arrival="${CSS.escape(arrival.id)}"]`);
     if (!card) continue;
     card.querySelector('.eta').innerHTML = etaLabel(arrival);
@@ -615,7 +795,9 @@ async function initialize() {
       ...item, color: item.color || routePalette[index % routePalette.length], loadedAt: 0,
     }));
     showStops(); renderLineList();
-    $('#network-count').textContent = `${state.stops.length.toLocaleString('es')} paradas · ${state.lines.size} líneas`;
+    $('#network-count').textContent = state.provider.kind === 'bike'
+      ? `${state.stops.length.toLocaleString('es')} estaciones`
+      : `${state.stops.length.toLocaleString('es')} paradas · ${state.lines.size} líneas`;
     connection(`${provider.name} · red conectada`);
     const requested = new URLSearchParams(location.search).get('stop');
     if (requested) {
@@ -647,20 +829,39 @@ async function switchProvider(id, stopId) {
   stopGroup.eachLayer(clearStopTooltip); contextGroup.eachLayer(clearStopTooltip);
   stopGroup.clearLayers(); contextGroup.clearLayers(); selectionGroup.clearLayers();
   state.speed = provider.speed; $('#speed').value = state.speed; $('#speed-value').value = state.speed;
-  $('#provider-select').value = id; $('#provider-description').textContent = provider.description;
+  $('#provider-name').textContent = provider.name; $('#provider-description').textContent = provider.description;
   $('#provider-source').href = provider.source; $('#provider-source').textContent = `Fuente: ${provider.name} ↗`;
-  $('.city-label').textContent = `VALÈNCIA / ${provider.name.toUpperCase()}`;
-  state.sheetExpanded = false; $('#workspace').classList.remove('is-stop-expanded');
-  $('#stop-panel').innerHTML = '<div class="empty-state"><h2>Selecciona una parada</h2><p>Busca por nombre o número, o elige una parada directamente en el mapa.</p></div>';
+  $('#network-name').textContent = provider.name; $('#sheet').style.cssText = providerStyle(provider);
+  for (const tab of document.querySelectorAll('.mode-tab')) tab.setAttribute('aria-pressed', String(tab.dataset.provider === id));
+  state.sheetExpanded = false; $('#workspace').classList.remove('is-stop-expanded', 'has-stop');
+  renderIdle();
   $('#search').value = ''; $('#search-results').hidden = true; $('#line-list').innerHTML = '';
   $('#route-progress').textContent = ''; $('#network-count').textContent = 'Cargando red…';
   const url = new URL(location.href); url.searchParams.set('provider', id);
   if (stopId) url.searchParams.set('stop', stopId); else url.searchParams.delete('stop');
   history.replaceState(null, '', url);
+  try { localStorage.setItem('enruta-provider', id); } catch { /* Storage may be disabled. */ }
   await initialize();
 }
-$('#provider-select').innerHTML = [...providers.values()].map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-$('#provider-select').addEventListener('change', event => switchProvider(event.target.value));
+$('#modebar').style.setProperty('--modes', providers.size);
+$('#modebar').innerHTML = [...providers.values()].map(p => `<button class="mode-tab" data-provider="${p.id}" aria-pressed="false" aria-label="${escape(p.name)}" style="--mode-color:${p.color};--mode-ink:${p.ink || '#fff'}"><span class="mode-icon">${glyphSVG(p.glyph)}</span><span>${escape(p.short || p.name)}</span></button>`).join('');
 $('#context-stops').addEventListener('change', event => { state.contextStops = event.target.checked; showContextStops(); });
+
+if ('serviceWorker' in navigator && isSecureContext) addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+let installPrompt = null;
+addEventListener('beforeinstallprompt', event => { event.preventDefault(); installPrompt = event; $('#install-app').hidden = false; });
+addEventListener('appinstalled', () => { installPrompt = null; $('#install-app').hidden = true; toast('En ruta se ha instalado en tu dispositivo.'); });
+$('#install-app').addEventListener('click', async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt(); await installPrompt.userChoice.catch(() => {});
+  installPrompt = null; $('#install-app').hidden = true;
+});
+
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+$('#ios-install').hidden = standalone || !/iphone|ipad|ipod/i.test(navigator.userAgent);
+
 const initial = new URLSearchParams(location.search);
-switchProvider(providers.has(initial.get('provider')) ? initial.get('provider') : 'emt', initial.get('stop'));
+let remembered = null;
+try { remembered = localStorage.getItem('enruta-provider'); } catch { /* Storage may be disabled. */ }
+const initialProvider = [initial.get('provider'), remembered].find(id => providers.has(id)) || 'emt';
+switchProvider(initialProvider, initial.get('stop'));

@@ -4,7 +4,7 @@ Mapa interactivo con **JavaScript vanilla**, Leaflet y tiles raster de OpenStree
 
 ## Redes disponibles
 
-El selector permite cambiar entre EMT, ATMV / Met Go, Metrovalencia (metro y tranvía) y Cercanías València. En «Líneas → Paradas de otras redes» se pueden superponer las otras redes y pulsar una parada para cambiar automáticamente de operador; el identificador de una parada siempre se interpreta dentro de su operador.
+El selector permite cambiar entre EMT, ATMV / Met Go, Metrovalencia (metro y tranvía), Cercanías València y Valenbisi. En «Líneas → Paradas de otras redes» se pueden superponer las otras redes y pulsar una parada para cambiar automáticamente de operador; el identificador de una parada siempre se interpreta dentro de su operador.
 
 | Red | Datos en directo | Posición en el mapa | Consulta |
 | --- | --- | --- | --- |
@@ -12,10 +12,11 @@ El selector permite cambiar entre EMT, ATMV / Met Go, Metrovalencia (metro y tra
 | ATMV / Met Go | Previsiones y ocupación; algunas incluyen coordenadas de vehículo | Coordenadas publicadas cuando existen; estimación sobre recorrido en los demás casos | 30 s |
 | Metrovalencia | Próximas llegadas de la ficha pública de estación | Estimada sobre geometría del mapa y destino del servicio | 30 s |
 | Cercanías | GTFS-RT VehiclePositions y TripUpdates de Renfe | GPS publicado, con hora de medición | 20 s |
+| Valenbisi | Estaciones, bicicletas y anclajes disponibles | Estación fija; no es una posición de vehículo | 60 s |
 
 **No todas las fuentes proporcionan una posición real verificable.** Las tarjetas distinguen `GPS`, `Posición publicada · hora GPS no indicada` y `Estimación`. Las coordenadas de Met Go no incluyen timestamp de medición: una consulta reciente no garantiza que esas coordenadas también lo sean. Los puntos publicados se mantienen en su última ubicación y cambian con la siguiente consulta; solo las estimaciones avanzan continuamente entre consultas.
 
-Las paradas tienen color, forma y letra diferenciados: EMT verde/círculo, ATMV naranja/cuadrado A, Metro azul/rombo M y Cercanías violeta/círculo doble C. El tooltip y la ficha identifican el operador. Ver [docs/TRANSPORT-SERVICES.md](docs/TRANSPORT-SERVICES.md) para fuentes, contratos y despliegue independiente.
+Las paradas tienen color, forma y letra diferenciados: EMT verde/círculo, ATMV naranja/cuadrado A, Metro azul/rombo M, Cercanías violeta/círculo doble C y Valenbisi naranja/círculo V. El tooltip y la ficha identifican el operador. Ver [docs/TRANSPORT-SERVICES.md](docs/TRANSPORT-SERVICES.md) para fuentes, contratos y despliegue independiente.
 
 ## Arrancar
 
@@ -34,8 +35,11 @@ Ejemplos de las otras redes:
 - `http://localhost:3000/?provider=atmv&stop=487`
 - `http://localhost:3000/?provider=metro&stop=26`
 - `http://localhost:3000/?provider=cercanias&stop=65000`
+- `http://localhost:3000/?provider=valenbisi&stop=1`
 
 `npm start` carga los servicios como módulos separados dentro del servidor. Cercanías prepara el subconjunto de València desde el GTFS nacional en la primera consulta, por lo que esa carga tarda más que las siguientes; se conserva en memoria durante 12 horas.
+
+Valenbisi se obtiene mediante un navegador headless que carga la página pública de mapping y captura la respuesta de estaciones que usa la propia web. No requiere configurar una URL ni una API key en `.env`; el navegador y sus dependencias se instalan durante la construcción de Docker. La interfaz muestra bicicletas y anclajes disponibles, con una caché de 45 segundos.
 
 - Busca por número o nombre, o pulsa cualquier parada del mapa.
 - La parada seleccionada centra el mapa y muestra sus líneas y próximas llegadas; «Ver en mapa» enfoca el vehículo.
@@ -49,7 +53,7 @@ Ejemplos de las otras redes:
 
 ## Despliegue en un VPS
 
-El proyecto incluye [docker-compose.yml](docker-compose.yml), [Dockerfile](Dockerfile) y [nginx.conf](nginx.conf). Docker Compose construye dos servicios: `frontend` sirve la web compilada con Nginx y reenvía `/api/` al `backend` Node, que ejecuta los cuatro proveedores y la API v1. Solo el frontend publica un puerto; ambos servicios se reinician al arrancar el VPS y tienen comprobaciones de salud.
+El proyecto incluye [docker-compose.yml](docker-compose.yml), [Dockerfile](Dockerfile) y [nginx.conf](nginx.conf). Docker Compose construye dos servicios: `frontend` sirve la web compilada con Nginx y reenvía `/api/` al `backend` Node, que ejecuta los cinco proveedores y la API v1. Solo el frontend publica un puerto; ambos servicios se reinician al arrancar el VPS y tienen comprobaciones de salud.
 
 Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a OpenStreetMap, y espacio y memoria suficientes para procesar el GTFS nacional de Renfe. La primera consulta de Cercanías puede tardar y consumir más memoria; su caché está en RAM y se pierde al reiniciar.
 
@@ -62,10 +66,11 @@ Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a 
 
 	Edita `.env` y coloca el valor generado en `API_KEYS`. Puedes indicar varias claves separadas por comas. Protege el archivo con `chmod 600 .env`; no lo subas al repositorio ni incluyas las claves en el código del navegador. Las variables de entorno de Docker también son visibles para los administradores del host.
 
-2. Crea la red externa si aún no existe y arranca los servicios:
+	Para activar Valenbisi, añade también `VALENBISI_FEED_URL` con la URL completa del feed que compartiste. Si se deja vacío, el resto del mapa arranca normalmente y Valenbisi muestra que no tiene fuente configurada.
+
+2. Arranca los servicios:
 
 	```bash
-	docker network inspect proxy-net >/dev/null 2>&1 || docker network create proxy-net
 	docker compose up -d --build
 	docker compose ps
 	```
@@ -74,7 +79,7 @@ Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a 
 
 4. Para producción, usa un dominio y HTTPS mediante un proxy inverso existente con certificado válido. Conecta ese proxy a `proxy-net` y configura su destino como `http://en-ruta-frontend:80`, conservando las rutas completas, incluidas `/api/`. Ajusta su tiempo de lectura a al menos 150 segundos para la carga inicial de Cercanías. Establece `BIND_ADDRESS=127.0.0.1` en `.env` y vuelve a ejecutar `docker compose up -d` para no exponer el puerto de prueba a Internet. La configuración incluida no solicita certificados ni habilita HTTPS por sí sola. La geolocalización móvil y el envío seguro de claves requieren HTTPS.
 
-`PROXY_NETWORK` cambia el nombre de la red externa, que debe existir antes de arrancar. `API_CORS_ORIGINS` contiene los orígenes web autorizados exactos, separados por comas, por ejemplo `https://cliente.example`; vacío no autoriza solicitudes CORS. Las peticiones servidor a servidor no necesitan CORS. `API_RATE_LIMIT` limita las peticiones a `/api/v1` por clave y minuto, por proceso; el valor predeterminado es 120.
+`PROXY_NETWORK` cambia el nombre de la red Docker. `VALENBISI_FEED_URL` es opcional para arrancar, pero necesario para disponibilidad de bicicletas. `API_CORS_ORIGINS` contiene los orígenes web autorizados exactos, separados por comas, por ejemplo `https://cliente.example`; vacío no autoriza solicitudes CORS. Las peticiones servidor a servidor no necesitan CORS. `API_RATE_LIMIT` limita las peticiones a `/api/v1` por clave y minuto, por proceso; el valor predeterminado es 120.
 
 Comprueba desde el propio VPS, sustituyendo la clave de forma segura en tu terminal:
 

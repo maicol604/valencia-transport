@@ -1,12 +1,14 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { getRoutes, getStopArrivals, listNetwork } from './api-data.mjs';
+import { getRoutes, getStopArrivals, getStopStatus, listNetwork } from './api-data.mjs';
+import { vehicleEntity } from './adapters.mjs';
 
 const operators = [
   { id: 'emt', name: 'EMT València', mode: 'bus' },
   { id: 'atmv', name: 'ATMV · Met Go', mode: 'bus' },
   { id: 'metro', name: 'Metrovalencia', mode: 'rail' },
   { id: 'cercanias', name: 'Cercanías', mode: 'rail' },
+  { id: 'valenbisi', name: 'Valenbisi', mode: 'bike' },
 ];
 const limits = new Map();
 
@@ -73,10 +75,11 @@ export async function handleApiV1(req, res, url) {
       const item = result.data.find(value => value.id === id);
       return item ? send(200, { data: item, meta: result.meta }) : send(404, { error: { code: 'not_found', message: 'Resource not found.' } });
     }
+    if (parts.length === 5 && resource === 'stops' && action === 'status') return send(200, { data: await getStopStatus(operator, id), meta: { source: 'cached-network' } });
     if (parts.length === 5 && resource === 'lines' && action === 'routes') return send(200, await getRoutes(operator, id));
     if (parts.length === 5 && resource === 'stops' && ['arrivals', 'vehicles'].includes(action)) {
       const result = await getStopArrivals(operator, id);
-      const data = action === 'vehicles' ? result.data.filter(item => item.position).map(item => ({ operator: item.operator, lineId: item.lineId, vehicleId: item.vehicleId, destination: item.destination, position: item.position })) : result.data;
+      const data = action === 'vehicles' ? result.data.filter(item => item.position).map(item => vehicleEntity(operator, item)) : result.data;
       return send(200, { ...result, data });
     }
     return send(404, { error: { code: 'not_found', message: 'Resource not found.' } });

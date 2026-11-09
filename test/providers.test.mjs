@@ -8,6 +8,65 @@ import { shapeModel, directedApproach } from '../public/js/services/shapes.js';
 import { reconcileArrivals } from '../public/js/arrivals.js';
 import { atmvURL } from '../services/atmv.mjs';
 import { dispatchProvider } from '../services/gateway.mjs';
+import { normalizeValenbisiBikes, normalizeValenbisiStations } from '../services/valenbisi.mjs';
+import { resolveValenbisiStations } from '../services/valenbisi.mjs';
+import { updateBikeDetails } from '../public/js/services/valenbisi.js';
+import { arrivalEntity, lineEntity, stationEntity } from '../services/adapters.mjs';
+
+test('Valenbisi normalizes the station response captured from the public page', () => {
+  const result = normalizeValenbisiStations([{
+    number: 7, name: 'Plaça de l’Ajuntament', position: { latitude: 39.4699, longitude: -0.3763 },
+    totalStands: { capacity: 20, availabilities: { bikes: 8, stands: 12 } }, status: 'OPEN', lastUpdate: 1700000000000,
+  }], 1700000001000);
+  assert.deepEqual(result.stations[0], {
+    id: '7', name: 'Plaça de l’Ajuntament', coords: [-0.3763, 39.4699], capacity: 20,
+    availableBikes: 8, availableDocks: 12, status: 'open', lastUpdated: 1700000000000,
+  });
+});
+
+test('Valenbisi preserves individual bike ratings and review state', () => {
+  assert.deepEqual(normalizeValenbisiBikes({ bikes: [
+    { number: 789, standNumber: 5, rating: { value: 100, count: 21 }, checked: false, status: 'AVAILABLE', statusLabel: 'Enganchada', lastRevisionDateTime: '2025-09-30T05:06:26' },
+    { id: '3228', score: 3, isReviewed: true },
+  ] }), [
+    { id: '789', rating: 3, ratingValue: 100, ratingCount: 21, ratingMax: 3, reviewed: false, standNumber: 5, status: 'AVAILABLE', statusLabel: 'Enganchada', lastRevisionAt: '2025-09-30T05:06:26' },
+    { id: '3228', rating: 3, ratingValue: 3, ratingCount: null, ratingMax: 3, reviewed: true, standNumber: null, status: null, statusLabel: null, lastRevisionAt: null },
+  ]);
+});
+
+test('Valenbisi keeps the last successful bike details after a temporary failure', () => {
+  const stop = { id: '262' };
+  const previous = [{ id: '789', rating: 3 }];
+  updateBikeDetails(stop, { bikes: previous, fetchedAt: 123 });
+  updateBikeDetails(stop, null, new Error('HTTP 502'));
+  assert.equal(stop.bikes, previous);
+  assert.equal(stop.bikesStale, true);
+  assert.equal(stop.bikesError, 'HTTP 502');
+});
+
+test('Valenbisi prefers the API and keeps the normalized provider shape', async () => {
+  const apiResult = normalizeValenbisiStations([{ number: 8, name: 'API station', position: { latitude: 39.47, longitude: -.37 } }]);
+  let fallbackCalled = false;
+  const result = await resolveValenbisiStations({ api: async () => apiResult, fallback: async () => { fallbackCalled = true; return { stations: [] }; } });
+  assert.deepEqual(result, apiResult);
+  assert.equal(fallbackCalled, false);
+});
+
+test('Valenbisi falls back after API authorization or payload failures', async () => {
+  const fallback = { stations: [{ id: 'fallback' }], fetchedAt: 1 };
+  for (const api of [async () => { throw Object.assign(new Error('Unauthorized'), { status: 403 }); }, async () => { throw new Error('invalid station list'); }, async () => null]) {
+    assert.deepEqual(await resolveValenbisiStations({ api, fallback: async () => fallback }), fallback);
+  }
+});
+
+test('common transport entities use English, stable fields', () => {
+  assert.deepEqual(stationEntity('metro', { id: 1, name: 'X', coords: [-.4, 39.4] }), {
+    operator: 'metro', id: '1', name: 'X', location: { type: 'Point', coordinates: [-.4, 39.4] }, lineIds: null,
+    capacity: null, availableBikes: null, availableDocks: null, status: null, lastUpdated: null,
+  });
+  assert.equal(lineEntity('emt', { id: 10 }).id, '10');
+  assert.equal(arrivalEntity('emt', { line: 4, arrivalAt: 1000 }).kind, 'realtime');
+});
 
 test('Met Go separates reported coordinates from ETA estimates and keeps actual vehicle IDs', () => {
   const data = [{ line: '161A', route: 'Quart', estimations: [

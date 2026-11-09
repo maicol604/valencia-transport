@@ -1,4 +1,9 @@
-import { upstreamText } from './shared.mjs';
+import { memoize, upstreamText } from './shared.mjs';
+
+const networkCache = new Map([
+  ['old/stops', memoize(3600000, () => upstreamText(atmvURL('old/stops', new URLSearchParams())))],
+  ['old/routes', memoize(3600000, () => upstreamText(atmvURL('old/routes', new URLSearchParams())))],
+]);
 
 export function atmvURL(path, params) {
   const valid = /^(?:old\/(?:stops|routes)|estimacion\/ocupacion\/\d{1,8}|stops\/code\/\d{1,8}\/routes|routes\/\d{1,8}\/(?:shapes\/?|stops))$/.test(path);
@@ -11,5 +16,6 @@ export function atmvURL(path, params) {
   return url;
 }
 export async function handleAtmv(path, params) {
+  if (networkCache.has(path)) return { text: await networkCache.get(path)(), type: 'application/json; charset=utf-8' };
   return { text: await upstreamText(atmvURL(path, params)), type: 'application/json; charset=utf-8' };
 }

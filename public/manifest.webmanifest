@@ -1,0 +1,27 @@
+{
+  "id": "./",
+  "name": "En ruta · Transporte de València",
+  "short_name": "En ruta",
+  "description": "Metro, Cercanías, EMT, Met Go y Valenbisi en un solo mapa, con llegadas en directo.",
+  "lang": "es",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#eef1f4",
+  "theme_color": "#ffffff",
+  "categories": ["travel", "navigation", "utilities"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Metro", "url": "./?provider=metro", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "EMT", "url": "./?provider=emt", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Valenbisi", "url": "./?provider=valenbisi", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

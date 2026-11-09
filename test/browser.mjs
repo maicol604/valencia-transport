@@ -41,7 +41,7 @@ try {
   await page.waitForFunction(() => /Recorridos: (\d+)\/\1(?:\D|$)/.test(document.querySelector('#route-progress').textContent), null, { timeout: 120000 });
   const paneOrder = await page.evaluate(() => ['routes', 'stops', 'vehicles', 'selection'].map(name => Number(getComputedStyle(document.querySelector(`.leaflet-${name}-pane`)).zIndex)));
   assert.ok(paneOrder[0] < paneOrder[1] && paneOrder[1] < paneOrder[2] && paneOrder[2] < paneOrder[3], 'buses render over stops and beneath the selected stop');
-  assert.ok(await page.evaluate(() => Object.values(window.__appMap._layers).some(layer => layer.options?.className === 'stop-marker' && layer._clickTolerance() >= 8)), 'stop markers have a forgiving click target');
+  assert.ok(await page.evaluate(() => Object.values(window.__appMap._layers).some(layer => layer.options?.className?.split(' ').includes('stop-marker') && layer._clickTolerance() >= 8)), 'stop markers have a forgiving click target');
   const badge = page.locator('.vehicle-badge').first();
   if (await badge.count()) assert.equal(await badge.evaluate(element => element.querySelector('.vehicle-code').scrollWidth <= element.clientWidth), true, 'vehicle code fits its marker');
   await page.waitForFunction(() => [...document.querySelectorAll('.vehicle-direction')].some(element => !element.hidden && Number.isFinite(Number(element.dataset.heading))), null, { timeout: 15000 });
@@ -74,7 +74,7 @@ try {
   await page.screenshot({ path: new URL('test-results/desktop.png', root).pathname });
   const stopTarget = await page.evaluate(() => {
     const map = window.__appMap;
-    const markers = Object.values(map._layers).filter(layer => layer.options?.className === 'stop-marker' && layer.getLatLng());
+    const markers = Object.values(map._layers).filter(layer => layer.options?.className?.split(' ').includes('stop-marker') && layer.getLatLng());
     const points = markers.map(marker => ({ marker, point: map.latLngToContainerPoint(marker.getLatLng()) }));
     const selectedId = document.querySelector('.stop-code').textContent.match(/PARADA\s+(\S+)/)?.[1];
     for (const { marker, point } of points) {

@@ -10,7 +10,7 @@ export { upstreamURL } from './services/emt.mjs';
 const root = dirname(fileURLToPath(import.meta.url));
 const publicRoot = resolve(root, 'public');
 const leafletRoot = resolve(root, 'node_modules/leaflet/dist');
-const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json' };
+const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
 
 export function createServer() {
   return http.createServer(async (req, res) => {

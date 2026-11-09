@@ -1,13 +1,17 @@
 import { JSDOM } from 'jsdom';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { dispatchProvider } from './gateway.mjs';
 import { madridParts, parseArrivals } from '../public/js/arrivals.js';
 import { buildRoutes } from '../public/js/geo.js';
 import { parseAtmvArrivals } from '../public/js/services/atmv.js';
 import { extractMapValue, parseMetroArrivals } from '../public/js/services/metro.js';
 import { parseRenfeArrivals } from '../public/js/services/cercanias.js';
+import { arrivalEntity, lineEntity, stationEntity } from './adapters.mjs';
 
 const Parser = new JSDOM('').window.DOMParser;
 const cache = new Map();
+const cacheDir = process.env.CACHE_DIR || '';
 const atmvQueue = [];
 let activeAtmv = 0;
 const sources = {
@@ -15,14 +19,39 @@ const sources = {
   atmv: 'https://metgovalencia.com/',
   metro: 'https://www.metrovalencia.es/es/consulta-mapas/',
   cercanias: 'https://data.renfe.com/dataset/ubicacion-vehiculos',
+  valenbisi: 'https://www.valenbisi.es/es/mapping',
 };
 
-function cached(key, ttl, load) {
+function cachePath(key) {
+  return join(cacheDir, `${key.replace(/[^a-z0-9_-]/gi, '_')}.json`);
+}
+
+async function readPersistent(key, ttl) {
+  if (!cacheDir) return null;
+  try {
+    const stored = JSON.parse(await readFile(cachePath(key), 'utf8'));
+    if (!stored || Date.now() >= stored.expiresAt || !stored.value) return null;
+    return stored.value;
+  } catch { return null; }
+}
+
+async function writePersistent(key, value, ttl) {
+  if (!cacheDir) return;
+  const file = cachePath(key), temporary = `${file}.${process.pid}.tmp`;
+  try {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(temporary, JSON.stringify({ expiresAt: Date.now() + ttl, value }));
+    await rename(temporary, file);
+  } catch { /* A disk cache is an optimization; memory remains authoritative. */ }
+}
+
+function cached(key, ttl, load, { persist = false } = {}) {
   const now = Date.now();
   for (const [entry, value] of cache) if (value.until <= now) cache.delete(entry);
   if (!cache.has(key)) {
     if (cache.size >= 300) cache.delete(cache.keys().next().value);
-    const promise = load().catch(error => { cache.delete(key); throw error; });
+    const promise = (persist ? readPersistent(key, ttl).then(value => value || load().then(result => writePersistent(key, result, ttl).then(() => result))) : load())
+      .catch(error => { cache.delete(key); throw error; });
     cache.set(key, { until: now + ttl, promise });
   }
   return cache.get(key).promise;
@@ -43,11 +72,9 @@ async function wfs(layer, params = {}) {
   if (!Array.isArray(result.features) || Number(result.totalFeatures) > result.features.length) throw new Error('Incomplete EMT layer');
   return result;
 }
-const stop = (operator, item) => ({ operator, id: String(item.id), name: item.name, location: { type: 'Point', coordinates: item.coords }, lineIds: item.lines ?? null });
-const line = (operator, item) => ({ operator, id: String(item.id), name: item.name || String(item.id), color: item.color || null });
-
 export function getNetwork(operator) {
-  return cached(`network:${operator}`, operator === 'cercanias' ? 43200000 : 3600000, async () => {
+  const ttl = operator === 'cercanias' ? 43200000 : operator === 'valenbisi' ? 45000 : 3600000;
+  return cached(`network:${operator}`, ttl, async () => {
     let stops, lines, extra = {};
     if (operator === 'emt') {
       const [stopData, lineData] = await Promise.all([wfs('Paradas'), wfs('Lineas')]);
@@ -80,15 +107,31 @@ export function getNetwork(operator) {
     } else if (operator === 'cercanias') {
       extra = await json(operator, 'network');
       ({ stops, lines } = extra);
+    } else if (operator === 'valenbisi') {
+      const result = await json(operator, 'stations');
+      stops = result.stations;
+      lines = [];
     } else throw Object.assign(new Error('Operator not found'), { status: 404 });
     if (!Array.isArray(stops) || !Array.isArray(lines)) throw new Error('Invalid network data');
     return { stops, lines, extra, fetchedAt: Date.now() };
-  });
+  }, { persist: true });
+}
+
+export async function getStopStatus(operator, stopId) {
+  const network = await getNetwork(operator);
+  const selected = network.stops.find(item => String(item.id) === stopId);
+  if (!selected) throw Object.assign(new Error('Stop not found'), { status: 404 });
+  return {
+    operator, id: String(selected.id), name: selected.name,
+    capacity: selected.capacity ?? null, availableBikes: selected.availableBikes ?? null,
+    availableDocks: selected.availableDocks ?? null, status: selected.status ?? null,
+    lastUpdated: selected.lastUpdated ? new Date(selected.lastUpdated).toISOString() : null,
+  };
 }
 
 export async function listNetwork(operator, kind) {
   const network = await getNetwork(operator);
-  return { data: kind === 'stops' ? network.stops.map(item => stop(operator, item)) : network.lines.map(item => line(operator, item)), meta: { source: sources[operator], fetchedAt: new Date(network.fetchedAt).toISOString() } };
+  return { data: kind === 'stops' ? network.stops.map(item => stationEntity(operator, item)) : network.lines.map(item => lineEntity(operator, item)), meta: { source: sources[operator], fetchedAt: new Date(network.fetchedAt).toISOString() } };
 }
 
 export async function getRoutes(operator, lineId) {
@@ -124,23 +167,14 @@ export async function getRoutes(operator, lineId) {
 function iso(value) {
   return Number.isFinite(value) ? new Date(value).toISOString() : null;
 }
-function normalizeArrival(operator, arrival) {
-  return {
-    operator, lineId: String(arrival.line), destination: arrival.destination || null,
-    raw: arrival.raw || null, arrivalAt: iso(arrival.arrivalAt), observedAt: iso(arrival.observedAt),
-    kind: arrival.programmed ? 'scheduled' : 'realtime', vehicleId: arrival.vehicleId == null ? null : String(arrival.vehicleId),
-    position: arrival.position ? { location: { type: 'Point', coordinates: arrival.position.coords }, kind: arrival.position.kind, measuredAt: iso(arrival.position.timestamp), receivedAt: iso(arrival.position.receivedAt) } : null,
-    occupancy: arrival.occupancy == null ? null : String(arrival.occupancy), platform: arrival.platform || null,
-  };
-}
-
 export async function getStopArrivals(operator, stopId) {
   const network = await getNetwork(operator);
   const selected = network.stops.find(item => String(item.id) === stopId);
   if (!selected) throw Object.assign(new Error('Stop not found'), { status: 404 });
   const result = await cached(`arrivals:${operator}:${stopId}`, operator === 'emt' || operator === 'cercanias' ? 20000 : 25000, async () => {
     let arrivals, feedAt = null;
-    if (operator === 'emt') arrivals = parseArrivals(await request(operator, 'sae', { parada: stopId }), Date.now(), Parser);
+    if (operator === 'valenbisi') arrivals = [];
+    else if (operator === 'emt') arrivals = parseArrivals(await request(operator, 'sae', { parada: stopId }), Date.now(), Parser);
     else if (operator === 'atmv') arrivals = parseAtmvArrivals(await json(operator, `estimacion/ocupacion/${encodeURIComponent(stopId)}`));
     else if (operator === 'metro') arrivals = parseMetroArrivals(await json(operator, 'arrivals', { stop: stopId }), Date.now(), Parser);
     else {
@@ -148,7 +182,7 @@ export async function getStopArrivals(operator, stopId) {
       arrivals = parseRenfeArrivals(positions, updates, selected, network.extra);
       feedAt = iso(Number(positions.header?.timestamp) * 1000);
     }
-    return { data: arrivals.map(value => normalizeArrival(operator, value)), meta: { source: sources[operator], fetchedAt: new Date().toISOString(), positions: operator === 'emt' || operator === 'metro' ? 'not_published' : 'partial', ...(feedAt ? { feedAt } : {}) } };
+    return { data: arrivals.map(value => arrivalEntity(operator, value)), meta: { source: sources[operator], fetchedAt: new Date().toISOString(), positions: operator === 'emt' || operator === 'metro' || operator === 'valenbisi' ? 'not_published' : 'partial', ...(feedAt ? { feedAt } : {}) } };
   });
   if (operator !== 'cercanias') return result;
   const now = Date.now();

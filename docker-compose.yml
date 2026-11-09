@@ -5,9 +5,15 @@ services:
       target: backend
     restart: unless-stopped
     environment:
-      API_KEYS: ${API_KEYS:?Configura API_KEYS en el archivo .env}
+      API_KEYS: ${API_KEYS:-}
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-}
       API_RATE_LIMIT: ${API_RATE_LIMIT:-120}
+      CACHE_DIR: /app/.cache
+      VALENBISI_API_KEY: ${VALENBISI_API_KEY:-}
+      VALENBISI_CONTRACT: ${VALENBISI_CONTRACT:-valence}
+      VALENBISI_BIKES_AUTH: ${VALENBISI_BIKES_AUTH:-}
+    volumes:
+      - transit-cache:/app/.cache
     networks:
       - default
 
@@ -27,7 +33,9 @@ services:
         aliases:
           - en-ruta-frontend
 
+volumes:
+  transit-cache:
+
 networks:
   proxy-net:
-    external: true
     name: ${PROXY_NETWORK:-proxy-net}

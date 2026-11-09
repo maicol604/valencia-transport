@@ -73,6 +73,25 @@ paths:
                   data: { type: array, items: { $ref: '#/components/schemas/Arrival' } }
                   meta: { $ref: '#/components/schemas/RealtimeMetadata' }
         default: { $ref: '#/components/responses/Error' }
+  /operators/{operator}/stops/{stopId}/status:
+    parameters:
+      - { $ref: '#/components/parameters/Operator' }
+      - { $ref: '#/components/parameters/StopId' }
+    get:
+      operationId: getStopStatus
+      description: Cached station availability, currently populated for Valenbisi.
+      responses:
+        '200':
+          description: Current station status from the cached network snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/StationStatus' }
+                  meta: { $ref: '#/components/schemas/Metadata' }
+        default: { $ref: '#/components/responses/Error' }
   /operators/{operator}/stops/{stopId}/vehicles:
     parameters:
       - { $ref: '#/components/parameters/Operator' }
@@ -142,7 +161,7 @@ components:
   securitySchemes:
     apiKey: { type: apiKey, in: header, name: X-API-Key }
   parameters:
-    Operator: { name: operator, in: path, required: true, schema: { type: string, enum: [emt, atmv, metro, cercanias] } }
+    Operator: { name: operator, in: path, required: true, schema: { type: string, enum: [emt, atmv, metro, cercanias, valenbisi] } }
     StopId: { name: stopId, in: path, required: true, schema: { type: string } }
     LineId: { name: lineId, in: path, required: true, schema: { type: string } }
     Query: { name: q, in: query, schema: { type: string }, description: Case-insensitive ID or name search. }
@@ -179,9 +198,9 @@ components:
       type: object
       required: [id, name, mode]
       properties:
-        id: { type: string, enum: [emt, atmv, metro, cercanias] }
+        id: { type: string, enum: [emt, atmv, metro, cercanias, valenbisi] }
         name: { type: string }
-        mode: { type: string, enum: [bus, rail] }
+        mode: { type: string, enum: [bus, rail, bike] }
     Point:
       type: object
       required: [type, coordinates]
@@ -192,15 +211,23 @@ components:
           minItems: 2
           maxItems: 2
           prefixItems: [ { type: number, description: Longitude }, { type: number, description: Latitude } ]
-    Stop:
+    Station:
       type: object
-      required: [operator, id, name, location, lineIds]
+      required: [operator, id, name, location, lineIds, capacity, availableBikes, availableDocks, status, lastUpdated]
       properties:
         operator: { type: string }
         id: { type: string }
         name: { type: string }
         location: { $ref: '#/components/schemas/Point' }
         lineIds: { type: [array, 'null'], items: { type: string }, description: Null when membership is not available in the network. }
+        capacity: { type: [integer, 'null'] }
+        availableBikes: { type: [integer, 'null'] }
+        availableDocks: { type: [integer, 'null'] }
+        status: { type: [string, 'null'] }
+        lastUpdated: { type: [string, 'null'], format: date-time }
+    Stop:
+      allOf:
+        - { $ref: '#/components/schemas/Station' }
     Line:
       type: object
       required: [operator, id, name, color]
@@ -256,6 +283,18 @@ components:
         vehicleId: { type: [string, 'null'] }
         destination: { type: [string, 'null'] }
         position: { $ref: '#/components/schemas/Position' }
+    StationStatus:
+      type: object
+      required: [operator, id, name]
+      properties:
+        operator: { type: string }
+        id: { type: string }
+        name: { type: string }
+        capacity: { type: [integer, 'null'] }
+        availableBikes: { type: [integer, 'null'] }
+        availableDocks: { type: [integer, 'null'] }
+        status: { type: [string, 'null'] }
+        lastUpdated: { type: [string, 'null'], format: date-time }
     Metadata:
       type: object
       required: [source, fetchedAt]

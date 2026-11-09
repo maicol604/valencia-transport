@@ -2,7 +2,7 @@ import { handleProvider } from './index.mjs';
 
 // These URLs are deployment configuration, never supplied by an HTTP caller.
 export async function dispatchProvider(provider, path, params) {
-  if (!['emt', 'atmv', 'metro', 'cercanias'].includes(provider)) throw Object.assign(new Error('Provider not allowed'), { status: 400 });
+  if (!['emt', 'atmv', 'metro', 'cercanias', 'valenbisi'].includes(provider)) throw Object.assign(new Error('Provider not allowed'), { status: 400 });
   const remote = process.env[`${provider.toUpperCase()}_SERVICE_URL`];
   if (!remote) return handleProvider(provider, path, params);
   const base = new URL(remote.endsWith('/') ? remote : `${remote}/`);

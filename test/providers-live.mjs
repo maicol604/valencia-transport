@@ -63,14 +63,14 @@ try {
     await page.screenshot({ path: new URL(`../test-results/${provider}.png`, import.meta.url).pathname });
   }
   // Exercise async isolation with in-flight requests from multiple providers.
-  await page.locator('#provider-select').selectOption('atmv');
-  await page.locator('#provider-select').selectOption('metro');
-  await page.locator('#provider-select').selectOption('emt');
+  await page.locator('[data-provider="atmv"]').click();
+  await page.locator('[data-provider="metro"]').click();
+  await page.locator('[data-provider="emt"]').click();
   await page.waitForFunction(() => document.querySelector('#connection').textContent.includes('EMT') && document.querySelector('#network-count').textContent.includes('paradas'), null, { timeout: 60000 });
-  assert.equal(await page.locator('#provider-select').inputValue(), 'emt');
+  assert.equal(await page.locator('[data-provider="emt"]').getAttribute('aria-pressed'), 'true');
   await page.locator('#lines-toggle').click();
   await page.locator('#context-stops').check();
-  await page.locator('.provider-stop-atmv').first().waitFor({ timeout: 120000 });
+  await page.waitForFunction(() => Object.values(window.__appMap._layers).some(layer => layer.options?.className?.includes('provider-stop-atmv')), null, { timeout: 120000 });
   await page.locator('.provider-stop-metro').first().waitFor({ timeout: 120000 });
   await page.locator('.provider-stop-cercanias').first().waitFor({ timeout: 120000 });
   await page.locator('#lines-close').click();

@@ -34,8 +34,8 @@ try {
         }
         return route.fulfill({ contentType: 'application/xml', body: '<estimacion><solo_parada><bus><linea>31</linea><destino>Port</destino><minutos>3 min.</minutos></bus></solo_parada></estimacion>' });
       }
-      if (url.hostname === 'www.metrovalencia.es') {
-        if (url.pathname.includes('consulta-mapas')) return route.fulfill({ contentType: 'text/html', body: 'var datosMapaGeneral = { estaciones: [{"lng":-0.38,"lat":39.47},{"lng":-0.378,"lat":39.47}], infoEstaciones: [{"id":26,"nombre":"Facultats","lineas":[{"id":3,"color":"ed1222"},{"id":5,"color":"00aa88"}]},{"id":27,"nombre":"Alameda","lineas":[{"id":3,"color":"ed1222"}]}], lineas: {"3":[{"lng":-0.38,"lat":39.47},{"lng":-0.378,"lat":39.47}]}, coloresLineas: {"3":"ed1222"} };' });
+      if (url.hostname === 'www.metrovalencia.es' || url.pathname.startsWith('/api/providers/metro/')) {
+        if (url.pathname.includes('consulta-mapas') || url.pathname.endsWith('/network')) return route.fulfill({ contentType: 'text/html', body: 'var datosMapaGeneral = { estaciones: [{"lng":-0.38,"lat":39.47},{"lng":-0.378,"lat":39.47}], infoEstaciones: [{"id":26,"nombre":"Facultats","lineas":[{"id":3,"color":"ed1222"},{"id":5,"color":"00aa88"}]},{"id":27,"nombre":"Alameda","lineas":[{"id":3,"color":"ed1222"}]}], lineas: {"3":[{"lng":-0.38,"lat":39.47},{"lng":-0.378,"lat":39.47}]}, coloresLineas: {"3":"ed1222"} };' });
         return route.fulfill({ json: { html: '<div class="item--proximos"><span class="linea-3"></span><span class="nombre-estacion">Rafelbunyol</span><span class="estacion__espera">2 min</span></div>' } });
       }
       if (url.hostname === 'api.softoursistemas.com') {
@@ -60,9 +60,14 @@ try {
     assert.equal(await page.locator('.stop-number-tooltip.is-selected .stop-label-code').innerText(), '167');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'page fits viewport');
     await page.evaluate(() => window.__appMap.setView([39.47, -0.378], 17, { animate: false }));
-    const mercatLabel = page.locator('.stop-number-tooltip').filter({ hasText: 'Mercat' });
-    await mercatLabel.waitFor();
-    if (viewport.width <= 600) await mercatLabel.tap(); else await mercatLabel.click();
+    assert.equal(await page.locator('.stop-number-tooltip').filter({ hasText: 'Mercat' }).count(), 0, 'dense bus labels stay hidden while a stop is selected');
+    const mercatPoint = await page.evaluate(() => {
+      const marker = Object.values(window.__appMap._layers).find(layer => layer._stopLabel?.stop.id === '168');
+      const point = window.__appMap.latLngToContainerPoint(marker.getLatLng());
+      const bounds = document.querySelector('#map').getBoundingClientRect();
+      return { x: bounds.x + point.x, y: bounds.y + point.y };
+    });
+    if (viewport.width <= 600) await page.touchscreen.tap(mercatPoint.x, mercatPoint.y); else await page.mouse.click(mercatPoint.x, mercatPoint.y);
     await page.waitForFunction(() => document.querySelector('#stop-name')?.textContent === 'Mercat');
     await page.evaluate(() => window.__appMap.setView([39.47, -0.38], 17, { animate: false }));
     const emtPoint = await page.evaluate(() => {
@@ -80,11 +85,11 @@ try {
       assert.ok(await page.locator('.map-shell').evaluate(element => element.getBoundingClientRect().height >= 205));
       await page.locator('#stop-panel-toggle').click();
     }
-    await page.selectOption('#provider-select', 'metro');
+    await page.locator('[data-provider="metro"]').click();
     await page.locator('#search').fill('Facultats');
     await page.locator('[data-stop="26"]').click();
     await page.locator('.stop-map-label.is-selected').waitFor();
-    assert.match(await page.locator('.stop-map-label.is-selected').innerText(), /Facultats/);
+    assert.match(await page.locator('.stop-map-label.is-selected').innerText(), /Facultats/i);
     assert.ok(await page.locator('.stop-map-label.is-selected .stop-label-line').count() >= 1);
     await page.waitForFunction(() => {
       const badges = document.querySelectorAll('.stop-map-label.is-selected .stop-label-line');
@@ -98,7 +103,7 @@ try {
       return marker.isTooltipOpen();
     });
     assert.equal(survivesHover, true, 'selected station label stays visible after pointer leaves');
-    await page.locator('.provider-stop-metro.is-selected').hover();
+    await page.locator('.stop-map-label.is-selected').hover();
     await page.mouse.move(1, 1);
     assert.equal(await page.locator('.stop-map-label.is-selected').isVisible(), true, 'selected label survives real pointer movement');
     if (viewport.width > 600) {
@@ -113,7 +118,7 @@ try {
       return Object.fromEntries(markers.map(marker => [marker.options.title, marker.options.opacity]));
     });
     assert.equal(markerOpacity['Metrovalencia · Facultats'], 1, 'selected station remains prominent');
-    assert.equal(markerOpacity['Metrovalencia · Alameda'], .78, 'other stations retain reduced opacity');
+    assert.equal(markerOpacity['Metrovalencia · Alameda'], .9, 'other stations retain reduced opacity');
     await page.evaluate(() => window.__appMap.setView([39.47, -0.378], 17, { animate: false }));
     const alamedaLabel = page.locator('.stop-map-label').filter({ hasText: 'Alameda' });
     await alamedaLabel.waitFor();
@@ -137,8 +142,8 @@ try {
     const contextLabel = page.locator('.stop-map-label').filter({ hasText: 'València Nord' });
     await contextLabel.waitFor();
     if (viewport.width <= 600) await contextLabel.tap(); else await contextLabel.click();
-    await page.waitForFunction(() => document.querySelector('#provider-select')?.value === 'cercanias' && document.querySelector('#stop-name')?.textContent === 'València Nord');
-    await page.selectOption('#provider-select', 'atmv');
+    await page.waitForFunction(() => document.querySelector('[data-provider="cercanias"]')?.getAttribute('aria-pressed') === 'true' && document.querySelector('#stop-name')?.textContent === 'València Nord');
+    await page.locator('[data-provider="atmv"]').click();
     await page.locator('#search').fill('77');
     await page.locator('[data-stop="77"]').click();
     await page.locator('.stop-map-label.is-selected').waitFor();
@@ -148,11 +153,11 @@ try {
     assert.equal(await page.locator('.vehicle-code').innerText(), '161A');
     assert.ok(await page.locator('.vehicle-code').evaluate(element => element.scrollWidth <= element.clientWidth), 'vehicle line fits its marker');
     await page.screenshot({ path: new URL(`../test-results/ui-vehicle-${viewport.width}.png`, import.meta.url).pathname });
-    await page.selectOption('#provider-select', 'cercanias');
+    await page.locator('[data-provider="cercanias"]').click();
     await page.locator('#search').fill('València Nord');
     await page.locator('[data-stop="B"]').click();
     await page.locator('.stop-map-label.is-selected').waitFor();
-    assert.match(await page.locator('.stop-map-label.is-selected').innerText(), /València Nord/);
+    assert.match(await page.locator('.stop-map-label.is-selected').innerText(), /València Nord/i);
     assert.deepEqual(errors, [], 'no browser exceptions');
     await page.close();
   }

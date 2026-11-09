@@ -2,8 +2,8 @@ import http from 'node:http';
 import { handleProvider } from './index.mjs';
 
 const provider = process.argv[2];
-const defaults = { emt: 3101, atmv: 3102, metro: 3103, cercanias: 3104 };
-if (!defaults[provider]) throw new Error('Usage: node services/serve.mjs emt|atmv|metro|cercanias');
+const defaults = { emt: 3101, atmv: 3102, metro: 3103, cercanias: 3104, valenbisi: 3105 };
+if (!defaults[provider]) throw new Error('Usage: node services/serve.mjs emt|atmv|metro|cercanias|valenbisi');
 const host = process.env.HOST || '127.0.0.1', port = Number(process.env.PORT || defaults[provider]);
 http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');

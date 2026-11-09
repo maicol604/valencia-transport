@@ -48,7 +48,7 @@ export function parseRenfeArrivals(positions, updates, stop, data, now = Date.no
 }
 
 export const cercanias = {
-  id: 'cercanias', name: 'Cercanías', color: '#8a4674', symbol: 'C', kind: 'train', interval: 20000, speed: 45, preloadRoutes: true,
+  id: 'cercanias', name: 'Cercanías', short: 'Cercanías', color: '#8a2d78', ink: '#ffffff', glyph: 'train', symbol: 'C', kind: 'train', interval: 20000, speed: 45, preloadRoutes: true,
   description: 'Renfe GPS with measurement time. Only trains whose trip serves the selected station are shown; ETA appears only when Renfe publishes it.',
   source: 'https://data.renfe.com/dataset/ubicacion-vehiculos',
   getNetwork: () => cache('network', 43200000, async () => {

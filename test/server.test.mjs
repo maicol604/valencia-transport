@@ -52,7 +52,7 @@ test('versioned API fails closed and authenticates without changing legacy route
   assert.equal((await fetch(`${base}/api/v1/operators`)).status, 401);
   const response = await fetch(`${base}/api/v1/operators`, { headers: { 'X-API-Key': 'second-secret' } });
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).data.map(operator => operator.id), ['emt', 'atmv', 'metro', 'cercanias']);
+  assert.deepEqual((await response.json()).data.map(operator => operator.id), ['emt', 'atmv', 'metro', 'cercanias', 'valenbisi']);
   assert.equal((await fetch(`${base}/api/sae?parada=bad`)).status, 400);
 });
 
@@ -90,6 +90,9 @@ test('versioned API normalizes a remote provider and protects cross-origin acces
   assert.deepEqual(stopResult.data[0].location.coordinates, [-0.4, 39.5]);
   conforms('Stop', stopResult.data[0]);
   conforms('PageMetadata', stopResult.meta);
+  const status = await (await fetch(`${base}/operators/atmv/stops/77/status`, { headers })).json();
+  assert.equal(status.data.id, '77');
+  conforms('StationStatus', status.data);
   const lines = await (await fetch(`${base}/operators/atmv/lines`, { headers })).json();
   assert.equal(lines.data.length, 1);
   conforms('Line', lines.data[0]);

@@ -2,7 +2,7 @@ import { getNetwork, getRoute, getArrivals } from './emt-api.js';
 import { buildRoutes, approachForStop } from '../geo.js';
 
 export const emt = {
-  id: 'emt', name: 'EMT', color: '#176a9b', symbol: 'E', kind: 'bus', interval: 20000, speed: 12, preloadRoutes: true,
+  id: 'emt', name: 'EMT', short: 'EMT', color: '#e23a2e', ink: '#ffffff', glyph: 'bus', symbol: 'E', kind: 'bus', interval: 20000, speed: 12, preloadRoutes: true,
   description: 'Live SAE arrivals with positions estimated from time to arrival.',
   source: 'https://geoportal.emtvalencia.es/visor?lang=es',
   async getNetwork() {

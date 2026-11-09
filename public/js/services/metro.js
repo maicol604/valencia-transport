@@ -3,6 +3,14 @@ import { shapeModel, directedApproach } from './shapes.js';
 
 const cache = createCache();
 let network;
+const metroLineFallbackColors = {
+  '1': '#f4c300', '2': '#e4007e', '3': '#e30613', '4': '#009fe3', '5': '#00a651',
+  '6': '#0072bc', '7': '#f58220', '8': '#8e44ad', '9': '#8b5a2b', '10': '#00a88f',
+};
+const metroLineColor = (id, value) => {
+  const raw = String(value || '').trim();
+  return /^#?[0-9a-f]{6}$/i.test(raw) ? `#${raw.replace(/^#/, '')}` : metroLineFallbackColors[id] || '#526575';
+};
 
 // Decode only JSON values embedded in the public map, never execute scraped JavaScript.
 export function extractMapValue(html, key) {
@@ -40,23 +48,23 @@ export function parseMetroArrivals(data, now = Date.now(), Parser = globalThis.D
 }
 
 export const metro = {
-  id: 'metro', name: 'Metrovalencia', color: '#c93f4b', symbol: 'M', kind: 'train', interval: 30000, speed: 30, preloadRoutes: true,
+  id: 'metro', name: 'Metrovalencia', short: 'Metro', color: '#d0103a', ink: '#ffffff', glyph: 'metro', symbol: 'M', kind: 'train', interval: 30000, speed: 30, preloadRoutes: true,
   description: 'Next arrivals from the Metrovalencia station board. Positions are estimated, not GPS; destination resolves direction where geometry allows it.',
   source: 'https://www.metrovalencia.es/es/consulta-mapas/',
   getNetwork: () => cache('network', 3600000, async () => {
-    const html = await transportRequest('metro', 'https://www.metrovalencia.es/es/consulta-mapas/', 'network');
+    // Metrovalencia sends a malformed Access-Control-Allow-Origin header, so browsers always need the proxy.
+    const html = await transportRequest('metro', null, 'network');
     const coords = extractMapValue(html, 'estaciones'), info = extractMapValue(html, 'infoEstaciones');
     const paths = extractMapValue(html, 'lineas'), colors = extractMapValue(html, 'coloresLineas');
     if (coords.length !== info.length) throw new Error('Metrovalencia station and coordinate counts do not match.');
     const stops = info.map((s, i) => ({ id: String(s.id), name: s.nombre, coords: [coords[i].lng, coords[i].lat], lines: s.lineas.map(l => String(l.id)) }));
     const publicLines = new Map(info.flatMap(s => s.lineas.map(l => [String(l.id), l])));
-    const lines = [...publicLines].map(([id, line]) => ({ id, name: `${['4', '6', '8', '10'].includes(id) ? 'Tram' : 'Metro'} · Line ${id}`, color: `#${line.color}`, features: Object.entries(paths).filter(([key]) => colors[key] === line.color).map(([, points]) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: points.map(p => [p.lng, p.lat]) } })) }));
+    const lines = [...publicLines].map(([id, line]) => ({ id, name: `${['4', '6', '8', '10'].includes(id) ? 'Tram' : 'Metro'} · Line ${id}`, color: metroLineColor(id, line.color), features: Object.entries(paths).filter(([key]) => colors[key] === line.color).map(([, points]) => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: points.map(p => [p.lng, p.lat]) } })) }));
     network = { stops, lines }; return network;
   }),
   async getModels(item) { return [shapeModel(item.features, network.stops.filter(s => s.lines.includes(item.id)))]; },
   async getArrivals(stop, signal) {
-    const body = new URLSearchParams({ action: 'formularios_ajax', data: `action=info-estacion&id=${encodeURIComponent(stop.id)}&lang=es` });
-    return parseMetroArrivals(await jsonRequest('metro', 'https://www.metrovalencia.es/wp-admin/admin-ajax.php', `arrivals?stop=${encodeURIComponent(stop.id)}`, { method: 'POST', body, signal }));
+    return parseMetroArrivals(await jsonRequest('metro', null, `arrivals?stop=${encodeURIComponent(stop.id)}`, { signal }));
   },
   getApproach: (models, stop, arrival) => arrival ? directedApproach(models, stop, arrival, network?.stops || []) : null,
 };
