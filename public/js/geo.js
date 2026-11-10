@@ -174,6 +174,6 @@ export function positionOnApproach(approach, meters) {
 
 export function estimatePosition(approach, arrival, now, speedKmh) {
   if (arrival.arrivalAt == null || arrival.programmed || now - arrival.observedAt > 90000 || now > arrival.arrivalAt + 15000) return null;
-  const seconds = Math.max(0, (arrival.arrivalAt - now) / 1000);
+  const seconds = Math.max(30, (arrival.arrivalAt - now) / 1000);
   return positionOnApproach(approach, seconds * speedKmh / 3.6);
 }

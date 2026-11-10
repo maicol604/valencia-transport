@@ -102,6 +102,14 @@ test('animation advances toward stop and expires stale, programmed and passed ar
   assert.equal(estimatePosition(approach, arrival, 176000, 12), null);
 });
 
+test('zero-minute estimates keep the vehicle 30 seconds before the stop', () => {
+  const path = measurePath([a, b, c]), approach = { path, offset: path.length };
+  const now = 100000;
+  const position = estimatePosition(approach, { observedAt: now, arrivalAt: now, programmed: false }, now, 12);
+  assert.ok(position);
+  assert.ok(Math.abs(distance(position, c) - 100) < 1);
+});
+
 test('reported vehicle position adjusts an inflated ETA only on its approaching route', () => {
   const stops = [{ id: '1', coords: a }, { id: '2', coords: b }, { id: '3', coords: c }];
   const models = [{ ...buildRoutes({ features: [segment(1, 'P00000101', 'P00000201', [a, b]), segment(2, 'P00000201', 'P00000301', [b, c])] }, info), allowEstimate: true }];
