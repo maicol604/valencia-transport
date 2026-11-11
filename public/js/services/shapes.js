@@ -2,7 +2,7 @@ import { measurePath, projectStop, distance, pointAt } from '../geo.js';
 
 export const normalizeName = text => String(text).normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-export function shapeModel(features, stops, { circular = false, direction, allowEstimate = true } = {}) {
+export function shapeModel(features, stops, { circular = false, direction, allowEstimate = true, serviceToday = null } = {}) {
   const paths = [];
   const stopIds = new Set(stops.map(s => s.id));
   for (const feature of features) {
@@ -20,7 +20,7 @@ export function shapeModel(features, stops, { circular = false, direction, allow
       paths.push(path);
     }
   }
-  return { paths, features, stopIds, allowEstimate };
+  return { paths, features, stopIds, allowEstimate, serviceToday };
 }
 
 export function directedApproach(models, stop, arrival, networkStops) {

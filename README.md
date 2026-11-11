@@ -44,8 +44,9 @@ Valenbisi se obtiene mediante un navegador headless que carga la página públic
 - Busca por número o nombre, o pulsa cualquier parada del mapa.
 - La parada seleccionada centra el mapa y muestra sus líneas y próximas llegadas; «Ver en mapa» enfoca el vehículo.
 - Las rutas de la parada seleccionada se destacan; «Líneas» permite activar toda la red o las paradas de otros operadores.
-- «Centrar parada y buses» encuadra las posiciones de la selección; el localizador muestra tu ubicación bajo petición.
-- En móvil, la ficha de llegadas se puede expandir o contraer sin ocultar el mapa.
+- «Centrar parada y buses» encuadra las posiciones de la selección; el localizador activa o pausa el seguimiento de tu ubicación. Al mover el mapa, el seguimiento se pausa.
+- El mapa se puede girar con dos dedos; aparece una brújula para volver al norte. En móvil, la ficha también se expande o contrae con un gesto vertical.
+- Met Go indica «Sin servicio hoy» solo cuando su fuente confirma que una línea no opera. EMT, Metrovalencia y Cercanías no publican aquí calendarios suficientes para confirmar ese estado.
 - Configuración: velocidad media de 6–60 km/h para posiciones estimadas, animación y conexión directa/automática/proxy.
 - Interfaz clara centrada en el mapa, adaptable a móvil, con navegación por teclado y respeto a la preferencia de movimiento reducido.
 

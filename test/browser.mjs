@@ -32,8 +32,7 @@ try {
   });
   await page.goto(`${base}/?stop=167`);
   await page.locator('#stop-name').waitFor({ timeout: 45000 });
-  await page.locator('.stop-number-tooltip').waitFor();
-  assert.equal(await page.locator('.stop-number-tooltip .stop-label-code').first().innerText(), '167', 'selected EMT stop shows its number on the map');
+  assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected EMT stop details stay in the drawer');
   await page.locator('text=OpenStreetMap contributors').waitFor({ timeout: 30000 });
   await page.locator('.leaflet-tile-loaded').first().waitFor({ timeout: 30000 });
   assert.equal((await page.locator('body').innerText()).includes('API key required'), false, 'basemap does not require an API key');
@@ -73,43 +72,35 @@ try {
   }
   await page.screenshot({ path: new URL('test-results/desktop.png', root).pathname });
   const stopTarget = await page.evaluate(() => {
-    const map = window.__appMap;
-    const markers = Object.values(map._layers).filter(layer => layer.options?.className?.split(' ').includes('stop-marker') && layer.getLatLng());
-    const points = markers.map(marker => ({ marker, point: map.latLngToContainerPoint(marker.getLatLng()) }));
-    const selectedId = document.querySelector('.stop-code').textContent.match(/PARADA\s+(\S+)/)?.[1];
-    for (const { marker, point } of points) {
-      const id = marker._stopLabel.stop.id;
-      if (id === selectedId || point.x < 30 || point.x > map.getSize().x - 30 || point.y < 30 || point.y > map.getSize().y - 30) continue;
-      const nearest = Math.min(...points.filter(other => other.marker !== marker).map(other => point.distanceTo(other.point)));
-      if (nearest > 32) return { x: point.x, y: point.y, id };
-    }
-    return null;
+    const selectedId = document.querySelector('.stop-code').textContent.match(/Parada\s+(\S+)/i)?.[1];
+    const marker = Object.values(window.__appMap._layers).find(layer => layer._stopLabel && layer._stopLabel.stop.id !== selectedId);
+    return marker?._stopLabel.stop.id || null;
   });
-  assert.ok(stopTarget, 'a separated stop marker is available for hit-target testing');
-  const mapBox = await page.locator('#map').boundingBox();
-  await page.mouse.click(mapBox.x + stopTarget.x + 10, mapBox.y + stopTarget.y);
-  await page.waitForFunction(id => document.querySelector('.stop-code')?.textContent.startsWith(`PARADA ${id}`), stopTarget.id);
+  assert.ok(stopTarget, 'another stop is available for selection testing');
+  await page.evaluate(id => { Object.values(window.__appMap._layers).find(layer => layer._stopLabel?.stop.id === id).fire('click'); }, stopTarget);
+  await page.waitForFunction(id => new RegExp(`^Parada ${id}`, 'i').test(document.querySelector('.stop-code')?.textContent || ''), stopTarget);
   for (let zoom = 0; zoom < 3; zoom++) {
     await page.locator('.leaflet-control-zoom-in').click();
     await page.waitForTimeout(300);
   }
-  await page.waitForFunction(() => document.querySelectorAll('.stop-number-tooltip').length > 1, null, { timeout: 5000 });
+  assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected stop has no map label at any zoom');
   for (let zoom = 0; zoom < 3; zoom++) {
     await page.locator('.leaflet-control-zoom-out').click();
     await page.waitForTimeout(300);
   }
   await page.locator('#search').fill('154');
   await page.locator('[data-stop="154"]').click();
-  await page.waitForFunction(() => document.querySelector('.stop-code')?.textContent.startsWith('PARADA 154'));
+  await page.waitForFunction(() => /^Parada 154/i.test(document.querySelector('.stop-code')?.textContent || ''));
   assert.equal(await page.locator('.arrival-meta').first().evaluate(element => getComputedStyle(element).borderTopStyle), 'none', 'arrival details have no divider crossing the row');
   await page.locator('#settings-open').click();
+  await page.locator('#advanced-settings').check();
   await page.locator('#speed').fill('18');
   assert.equal(await page.locator('#speed-value').innerText(), '18');
   await page.keyboard.press('Escape');
   await page.locator('#lines-toggle').click();
   await page.locator('#line-list [data-line="31"]').click();
   assert.equal(await page.locator('#line-list [data-line="31"]').getAttribute('aria-pressed'), 'true');
-  assert.ok(await page.locator('.leaflet-routes-pane canvas').count() > 0, 'route renderer stays in its dedicated pane');
+  assert.ok(await page.locator('.leaflet-routes-pane svg').count() > 0, 'route renderer stays in its dedicated pane');
   await page.locator('#lines-close').click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(1500);
@@ -120,6 +111,12 @@ try {
   assert.ok(await page.locator('.map-shell').evaluate(element => element.getBoundingClientRect().height >= 205), 'expanded arrivals sheet leaves useful map height');
   await page.locator('#stop-panel-toggle').click();
   assert.equal(await page.locator('#stop-panel-toggle').getAttribute('aria-expanded'), 'false', 'mobile arrivals sheet collapses');
+  const handleBox = await page.locator('#sheet-handle').boundingBox();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y - 100, { steps: 8 });
+  await page.mouse.up();
+  assert.equal(await page.locator('#stop-panel-toggle').getAttribute('aria-expanded'), 'true', 'swiping the drawer expands it on mobile');
   await page.locator('#stop-panel-toggle').click();
   await page.screenshot({ path: new URL('test-results/mobile.png', root).pathname });
   const parsing = await page.evaluate(async () => {
@@ -135,6 +132,7 @@ try {
 
   // Simulate a browser-only block: automatic mode must use our fixed-host proxy.
   await page.route('https://geoportal.emtvalencia.es/**/MapUtilsPetitions.php*', route => route.abort('blockedbyclient'));
+  await page.locator('#stop-panel-toggle').click();
   await page.locator('#refresh').waitFor();
   await page.waitForFunction(() => !document.querySelector('#refresh').disabled);
   const proxied = page.waitForResponse(response => response.url().includes('/api/sae?') && response.status() === 200, { timeout: 30000 });

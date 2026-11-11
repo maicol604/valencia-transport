@@ -50,7 +50,11 @@ export const atmv = {
         request(`routes/${encodeURIComponent(route.route_id)}/stops?${query}`),
       ]);
       // The API may fall back to a different service day. Draw it, but don't derive current positions from it.
-      return shapeModel(shape.features || [], (data.stops || []).map(stopFrom), { circular: data.isCircular, direction, allowEstimate: !shape.noServiceToday });
+      return shapeModel(shape.features || [], (data.stops || []).map(stopFrom), {
+        circular: data.isCircular, direction,
+        allowEstimate: !shape.noServiceToday,
+        serviceToday: shape.noServiceToday ? false : null,
+      });
     })));
     const models = results.filter(r => r.status === 'fulfilled').map(r => r.value);
     if (!models.length) throw new Error(`Met Go route ${item.id} is unavailable.`);

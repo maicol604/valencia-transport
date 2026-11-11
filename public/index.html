@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="./styles.css">
   <script src="./vendor/map-runtime.js" defer></script>
+  <script src="./vendor/leaflet-rotate.js" defer></script>
   <script type="module" src="./js/app.js"></script>
 </head>
 <body>
@@ -34,7 +35,8 @@
     </header>
 
     <div class="map-tools">
-      <button id="locate" class="map-button" title="Mi ubicación" aria-label="Mostrar mi ubicación"><span class="icon-target" aria-hidden="true"></span></button>
+      <button id="orient" class="map-button" title="Orientar al norte" aria-label="Orientar el mapa al norte" hidden><span class="icon-compass" aria-hidden="true"></span></button>
+      <button id="locate" class="map-button" title="Seguir mi ubicación" aria-label="Seguir mi ubicación" aria-pressed="false"><span class="icon-target" aria-hidden="true"></span></button>
       <button id="fit" class="map-button" title="Centrar parada y vehículos" aria-label="Centrar parada y vehículos"><span class="icon-fit" aria-hidden="true"></span></button>
       <button id="lines-toggle" class="map-button layers-button" aria-expanded="false" aria-controls="line-panel" title="Líneas y capas"><span class="icon-layers" aria-hidden="true"></span><span class="sr-only">Líneas</span></button>
     </div>

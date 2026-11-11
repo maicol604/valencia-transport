@@ -28,7 +28,7 @@ try {
     await page.goto(`${base}/?provider=metro&stop=26`);
     await network;
     await page.locator('#stop-name').waitFor({ timeout: 60000 });
-    await page.locator('.stop-map-label.is-selected').waitFor();
+    assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected station details stay in the drawer');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'mobile page fits the viewport');
     assert.ok(await page.locator('.map-shell').evaluate(element => element.getBoundingClientRect().height >= 150), 'map remains usable');
     await page.locator('#search').fill('Alameda');

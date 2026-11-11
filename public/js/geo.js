@@ -25,6 +25,25 @@ export function pointAt(path, meters) {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
 }
 
+export function pathTangent(path, meters, step = 20) {
+  if (!path?.length || !Number.isFinite(meters) || !Number.isFinite(step) || step <= 0) return null;
+  const center = path.circular
+    ? (meters % path.length + path.length) % path.length
+    : Math.max(0, Math.min(path.length, meters));
+  const halfStep = Math.min(step, path.length / 2);
+  if (halfStep < 1) return null;
+  let fromOffset = center - halfStep, toOffset = center + halfStep;
+  if (path.circular) {
+    fromOffset = (fromOffset % path.length + path.length) % path.length;
+    toOffset = (toOffset % path.length + path.length) % path.length;
+  } else {
+    fromOffset = Math.max(0, fromOffset);
+    toOffset = Math.min(path.length, toOffset);
+  }
+  const from = pointAt(path, fromOffset), to = pointAt(path, toOffset);
+  return from && to ? [from, to] : null;
+}
+
 export function segmentNodes(id = '') {
   const match = /^([PL]\d{8})([PL]\d{8})$/.exec(id);
   return match ? match.slice(1) : [];

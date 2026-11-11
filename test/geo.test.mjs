@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { distance, measurePath, pointAt, buildRoutes, approachForStop, approachForPosition, positionOnApproach, estimatePosition, segmentNodes, nodeStop } from '../public/js/geo.js';
+import { distance, measurePath, pointAt, pathTangent, buildRoutes, approachForStop, approachForPosition, positionOnApproach, estimatePosition, segmentNodes, nodeStop } from '../public/js/geo.js';
 import { adjustedArrivalAt, parseMinutes, reconcileArrivals } from '../public/js/arrivals.js';
 
 const a = [-0.38, 39.47], b = [-0.37, 39.47], c = [-0.36, 39.47];
@@ -14,6 +14,16 @@ test('meters are measured along the route, not the straight line to the stop', (
   assert.deepEqual(pointAt(path, path.length), c);
   assert.equal(pointAt(path, -1), null);
   assert.equal(pointAt(path, path.length + 1), null);
+});
+
+test('route tangent follows the vehicle location instead of the destination stop', () => {
+  const bend = [-0.37, 39.48], path = measurePath([a, b, bend]);
+  const vehicleTangent = pathTangent(path, path.cumulative[1] / 2);
+  const stopTangent = pathTangent(path, path.length - 10);
+  assert.ok(vehicleTangent[1][0] > vehicleTangent[0][0]);
+  assert.ok(Math.abs(vehicleTangent[1][1] - vehicleTangent[0][1]) < 0.000001);
+  assert.ok(stopTangent[1][1] > stopTangent[0][1]);
+  assert.ok(Math.abs(stopTangent[1][0] - stopTangent[0][0]) < 0.000001);
 });
 
 test('IDTRAMO decodes real stop IDs including leading zeros and platform suffix', () => {
@@ -117,6 +127,8 @@ test('reported vehicle position adjusts an inflated ETA only on its approaching 
   const approach = approachForPosition(models, stops[1], coords);
   const away = approachForPosition([{ ...buildRoutes({ features: [segment(1, 'P00000301', 'P00000201', [c, b]), segment(2, 'P00000201', 'P00000101', [b, a])] }, info), allowEstimate: true }], stops[1], coords);
   assert.ok(approach.vehicleDistance > 0);
+  const snapped = positionOnApproach(approach, approach.vehicleDistance);
+  assert.ok(distance(snapped, coords) < 1, 'reported coordinates are projected onto the route geometry');
   assert.equal(away, null);
   const arrival = { observedAt: 100000, arrivalAt: 100000 + 74 * 60000, position: { receivedAt: 100000 } };
   const adjusted = adjustedArrivalAt(arrival, approach, 100000, 20);

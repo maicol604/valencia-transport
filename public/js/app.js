@@ -1,5 +1,5 @@
 import { setTransport } from './services/emt-api.js';
-import { estimatePosition, distance, pointAt, approachForPosition } from './geo.js';
+import { estimatePosition, distance, pathTangent, approachForPosition, positionOnApproach } from './geo.js';
 import { adjustedArrivalAt, reconcileArrivals } from './arrivals.js';
 import { providers } from './services/index.js';
 import { configureTransport } from './services/transport.js';
@@ -17,11 +17,13 @@ const state = {
   generation: 0, controller: null, poll: null, observedAt: null, lastError: '', busy: false,
   routeFailures: new Set(), source: 'direct', routeRefresh: 0, pendingVehicleFit: false,
   provider: providers.get('emt'), epoch: 0, networks: new Map(), contextStops: false, contextEpoch: 0,
+  lineServiceStatus: new Map(), locationWatch: null, followingLocation: false,
 };
 
-const map = L.map('map', { zoomControl: false, preferCanvas: true, minZoom: 10, maxZoom: 19 }).setView([39.472, -0.370], 13);
+const map = L.map('map', { zoomControl: false, preferCanvas: true, minZoom: 10, maxZoom: 19, rotate: true, touchRotate: true, rotateControl: false }).setView([39.472, -0.370], 13);
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 const stopRenderer = L.canvas({ pane: 'stops', tolerance: 10 });
+const routeRenderer = L.svg({ pane: 'routes' });
 const providerStyle = provider => `--provider-color:${provider.color};--provider-ink:${provider.ink || '#fff'}`;
 
 // Canvas circle with the operator pictogram: thousands of bus stops stay cheap to draw.
@@ -46,7 +48,7 @@ const IconStop = L.CircleMarker.extend({
     ctx.restore();
   },
 });
-const stopRadius = (zoom, selected) => selected ? 13 : zoom <= 13 ? 3.5 : zoom === 14 ? 5 : zoom === 15 ? 9 : 11;
+const stopRadius = (zoom, selected) => selected ? zoom >= 18 ? 6 : 13 : zoom <= 13 ? 3.5 : zoom === 14 ? 5 : zoom === 15 ? 9 : 11;
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
@@ -54,12 +56,30 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 map.createPane('routes'); map.getPane('routes').style.zIndex = 410;
 map.createPane('stops'); map.getPane('stops').style.zIndex = 430;
 map.createPane('vehicles'); map.getPane('vehicles').style.zIndex = 660;
-map.createPane('selection'); map.getPane('selection').style.zIndex = 640;
+map.createPane('selection'); map.getPane('selection').style.zIndex = 670;
 const stopGroup = L.layerGroup().addTo(map);
 const selectionGroup = L.layerGroup().addTo(map);
 const busGroup = L.layerGroup().addTo(map);
 const contextGroup = L.layerGroup().addTo(map);
 let locationMarker = null, toastTimeout;
+
+map.on('click', event => {
+  if (event.layer || !(event.originalEvent?.target instanceof HTMLCanvasElement)) return;
+  const point = event.originalEvent;
+  const markers = [...state.stopLayers.values()];
+  contextGroup.eachLayer(marker => { if (marker._stopLabel) markers.push(marker); });
+  const nearest = markers.map(marker => ({ marker, point: map.latLngToContainerPoint(marker.getLatLng()) }))
+    .map(item => ({ ...item, distance: item.point.distanceTo(event.containerPoint) }))
+    .sort((first, second) => first.distance - second.distance)[0];
+  if (nearest?.distance < 24) { nearest.marker.fire('click'); return; }
+  const marker = markers.find(item => {
+    const tooltip = item.isTooltipOpen() && item.getTooltip()?.getElement();
+    if (!tooltip) return false;
+    const bounds = tooltip.getBoundingClientRect();
+    return point.clientX >= bounds.left && point.clientX <= bounds.right && point.clientY >= bounds.top && point.clientY <= bounds.bottom;
+  });
+  marker?.fire('click');
+});
 
 function toast(message) {
   $('#toast').textContent = message; $('#toast').hidden = false;
@@ -83,7 +103,9 @@ function contrastColor(value) {
   return red * .2126 + green * .7152 + blue * .0722 > .179 ? '#000' : '#fff';
 }
 function chip(line) {
-  return `<button class="line-chip" data-line="${escape(line)}" style="--route-color:${color(line)};--route-ink:${contrastColor(color(line))}" aria-pressed="${state.activeLine === line}" title="${escape(state.lines.get(line)?.name || `Línea ${line}`)}">${escape(line)}</button>`;
+  const inactive = state.lineServiceStatus.get(line) === false;
+  const label = `${state.lines.get(line)?.name || `Línea ${line}`}${inactive ? ', sin servicio hoy' : ''}`;
+  return `<button class="line-chip${inactive ? ' is-inactive' : ''}" data-line="${escape(line)}" style="--route-color:${color(line)};--route-ink:${contrastColor(color(line))}" aria-pressed="${state.activeLine === line}" aria-label="${escape(label)}" title="${escape(label)}">${escape(line)}${inactive ? '<span class="line-chip-status">Sin servicio hoy</span>' : ''}</button>`;
 }
 
 function servingLines(stop) {
@@ -101,11 +123,15 @@ async function loadLine(line) {
   const promise = provider.getModels(item)
     .then(models => {
       if (epoch !== state.epoch) return [];
+      if (models.length && models.every(model => model.serviceToday === false)) state.lineServiceStatus.set(line, false);
+      else if (models.some(model => model.serviceToday === true)) state.lineServiceStatus.set(line, true);
+      else state.lineServiceStatus.delete(line);
+      if (state.selected) renderStop();
       if (!models.some(m => m.paths.length)) throw new Error(`Recorrido de la línea ${line} no disponible.`);
       state.models.set(line, models); item.loadedAt = Date.now(); state.routeFailures.delete(line);
       if (state.routeLayers.has(line)) map.removeLayer(state.routeLayers.get(line));
       const layer = L.geoJSON({ type: 'FeatureCollection', features: models.flatMap(m => m.features) }, {
-        pane: 'routes', className: 'route-path', style: { color: item.color, weight: 3, opacity: .45, lineCap: 'round', lineJoin: 'round' },
+        pane: 'routes', renderer: routeRenderer, className: 'route-path', style: { color: item.color, weight: 3, opacity: .45, lineCap: 'round', lineJoin: 'round' },
         onEachFeature: (_feature, part) => {
           part.bindTooltip(`Línea ${escape(line)} · ${escape(item.name)}`, { sticky: true });
           part.on('click', event => { L.DomEvent.stopPropagation(event); selectLine(line); });
@@ -132,6 +158,7 @@ function updateLayers() {
   }
   const zoom = map.getZoom();
   map.getContainer().classList.toggle('zoom-far', zoom <= 14);
+  map.getContainer().classList.toggle('zoom-close', zoom >= 18);
   contextGroup.eachLayer(marker => {
     if (marker.setStyle) { marker.setStyle({ opacity: .55, weight: zoom <= 14 ? 1.5 : 2.5 }); marker.setRadius(stopRadius(zoom, false)); }
     else marker.setOpacity(.6);
@@ -139,13 +166,13 @@ function updateLayers() {
   for (const [id, marker] of state.stopLayers) {
     const onLine = !state.activeLine || state.models.get(state.activeLine)?.some(m => m.stopIds.has(id));
     const selected = state.selected?.id === id;
-    const opacity = selected ? 1 : state.selected ? (onLine ? .9 : .35) : 1;
+    const opacity = selected ? 1 : state.selected ? .38 : 1;
     if (marker.setStyle) {
       marker.setStyle({ opacity, weight: zoom <= 14 ? 1.5 : 2.5 });
       marker.setRadius(stopRadius(zoom, selected));
     } else marker.setOpacity(opacity);
     const element = marker.getElement();
-    if (element && !marker.setStyle) element.classList.toggle('is-selected', selected);
+    if (element && !marker.setStyle) element.classList.toggle('is-selected', selected && zoom < 18);
     marker.setZIndexOffset?.(selected ? 1000 : 0);
     if (selected) marker.bringToFront?.();
   }
@@ -162,13 +189,13 @@ function updateStopNumberLabels() {
   markers.sort((first, second) => Number(second.selected) - Number(first.selected) || Number(first.context) - Number(second.context));
   for (const { id, marker, selected, context } of markers) {
     const inView = bounds.contains(marker.getLatLng());
-    let visible = selected && inView;
+    let visible = false;
     const { stop, provider } = marker._stopLabel;
     const bike = provider.kind === 'bike';
     const showNearbyLabels = map.getZoom() >= (provider.kind === 'bus' ? 16 : 15);
-    if (inView && (selected || (showNearbyLabels && (!state.selected || provider.kind !== 'bus')))) {
+    if (!state.selected && inView && showNearbyLabels) {
       const point = map.latLngToContainerPoint(marker.getLatLng());
-      const lines = bike ? [] : (selected ? servingLines(stop) : stop.lines || []).slice(0, 4);
+      const lines = bike ? [] : (stop.lines || []).slice(0, 4);
       const width = bike ? 86 : Math.min(map.getSize().x <= 600 ? 235 : 265, 56 + stop.name.length * 7 + (provider.kind === 'bus' ? 38 : 0) + lines.length * 22);
       const needsLeft = point.x + width + 15 > map.getSize().x;
       const vertical = needsLeft && point.x - width - 10 < 0;
@@ -178,7 +205,7 @@ function updateStopNumberLabels() {
       marker.getTooltip().options.direction = direction;
       // Rightward transit labels sit on the stop so their operator badge doubles as the marker.
       marker.getTooltip().options.offset = direction === 'left' ? [-14, 0] : direction === 'right' ? [bike ? 14 : -23, 0] : direction === 'top' ? [0, -14] : [0, 14];
-      if (selected || (uncovered(point) && !occupied.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top))) {
+      if (uncovered(point) && !occupied.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) {
         occupied.push(box); visible = true;
       }
       marker.setTooltipContent(stopLabel(stop, provider, lines, context));
@@ -187,9 +214,8 @@ function updateStopNumberLabels() {
     else if (!visible && marker.isTooltipOpen()) marker.closeTooltip();
     const tooltip = marker.getTooltip();
     if (tooltip && visible) {
-      const onLine = !state.activeLine || state.models.get(state.activeLine)?.some(model => model.stopIds.has(id));
-      tooltip.setOpacity(selected || bike ? 1 : context ? .58 : state.selected ? (onLine ? .78 : .32) : map.getZoom() <= 13 ? .88 : 1);
-      tooltip.getElement()?.classList.toggle('is-selected', selected);
+      tooltip.setOpacity(bike ? 1 : context ? .58 : map.getZoom() <= 13 ? .88 : 1);
+      tooltip.getElement()?.classList.remove('is-selected');
     }
   }
 }
@@ -227,7 +253,7 @@ function stopLabel(stop, provider, lines, context) {
   const badges = lines.map(line => {
     const routeColor = context ? state.networks.get(provider.id)?.lines.find(item => item.id === line)?.color : state.lines.get(line)?.color;
     const safeColor = /^#[0-9a-f]{6}$/i.test(routeColor || '') ? routeColor : '#526575';
-    return `<span class="stop-label-line" style="background:${safeColor};color:${contrastColor(safeColor)}">${escape(line)}</span>`;
+    return `<span class="stop-label-line" style="background:${safeColor};color:#fff">${escape(line)}</span>`;
   }).join('');
   return `${operator}<span class="stop-label-copy">${provider.kind === 'bus' ? `<span class="stop-label-code">${escape(stop.id)}</span>` : ''}<span class="stop-label-name">${escape(stop.name)}</span></span>${badges ? `<span class="stop-label-lines">${badges}</span>` : ''}`;
 }
@@ -260,6 +286,7 @@ function clearStopTooltip(marker) {
 function showStops() {
   stopGroup.eachLayer(clearStopTooltip);
   stopGroup.clearLayers(); state.stopLayers.clear();
+  if (stopRenderer._container) stopRenderer._container.style.pointerEvents = state.provider.kind === 'train' && !state.contextStops ? 'none' : 'auto';
   for (const stop of state.stops) {
     const marker = stopMarker(stop, state.provider);
     marker.on('click', () => selectStop(stop));
@@ -286,6 +313,7 @@ async function showContextStops() {
   const generation = ++state.contextEpoch;
   contextGroup.eachLayer(clearStopTooltip);
   contextGroup.clearLayers();
+  if (stopRenderer._container) stopRenderer._container.style.pointerEvents = state.provider.kind === 'train' && !state.contextStops ? 'none' : 'auto';
   if (!state.contextStops) return;
   const currentProvider = state.provider.id;
   await Promise.all([...providers.values()].filter(p => p.id !== currentProvider).map(async provider => {
@@ -409,30 +437,27 @@ function arrivalApproach(arrival) {
   const models = state.models.get(arrival.line);
   if (arrival._models === models && arrival._stop === state.selected) return arrival._approach;
   arrival._models = models; arrival._stop = state.selected;
-  arrival._approach = state.provider.getApproach(models || [], state.selected, arrival);
-  if (!arrival._approach && arrival.position?.coords && models) {
-    arrival._approach = approachForPosition(models, state.selected, arrival.position.coords);
-  }
+  arrival._approach = arrival.position?.coords && models
+    ? approachForPosition(models.filter(model => model.allowEstimate !== false), state.selected, arrival.position.coords)
+    : state.provider.getApproach(models || [], state.selected, arrival);
   return arrival._approach;
 }
 
-function vehicleHeading(approach) {
+function vehicleHeading(approach, arrival, now) {
   const path = approach?.path;
   if (!path?.length || !Number.isFinite(approach.offset)) return null;
-  const center = path.circular ? (approach.offset % path.length + path.length) % path.length : Math.max(0, Math.min(path.length, approach.offset));
-  const step = Math.min(20, path.length / 2);
-  if (step < 1) return null;
-  let fromOffset = center - step;
-  let toOffset = center + step;
-  if (path.circular) {
-    fromOffset = (fromOffset % path.length + path.length) % path.length;
-    toOffset = (toOffset % path.length + path.length) % path.length;
+  let offset;
+  if (arrival.position) {
+    if (!Number.isFinite(approach.vehicleDistance)) return null;
+    offset = approach.offset - approach.vehicleDistance;
   } else {
-    fromOffset = Math.max(0, fromOffset);
-    toOffset = Math.min(path.length, toOffset);
+    if (!Number.isFinite(arrival.arrivalAt)) return null;
+    const distanceToStop = Math.max(30, (arrival.arrivalAt - now) / 1000 * state.speed / 3.6);
+    offset = approach.offset - distanceToStop;
   }
-  const from = pointAt(path, fromOffset), to = pointAt(path, toOffset);
-  if (!from || !to) return null;
+  const tangent = pathTangent(path, offset);
+  if (!tangent) return null;
+  const [from, to] = tangent;
   const start = map.latLngToLayerPoint(latlng(from));
   const end = map.latLngToLayerPoint(latlng(to));
   return Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
@@ -442,7 +467,8 @@ function arrivalPosition(arrival, now = Date.now(), approach = arrivalApproach(a
   if (arrival.position) {
     const measured = arrival.position.timestamp ?? arrival.position.receivedAt;
     if (now - measured > 90000 || now - arrival.observedAt > 90000 || (arrival.arrivalAt != null && now > arrival.arrivalAt + 15000)) return null;
-    return arrival.position.coords;
+    if (!approach || !Number.isFinite(approach.vehicleDistance)) return null;
+    return positionOnApproach(approach, approach.vehicleDistance);
   }
   return estimatePosition(approach, arrival, now, state.speed);
 }
@@ -451,12 +477,6 @@ function positionNote(arrival) {
   if (arrival.position?.kind === 'gps') return `GPS · ${new Date(arrival.position.timestamp).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
   if (arrival.position?.kind === 'reported') return 'Posición publicada · hora GPS no indicada';
   return `Estimación · ≈ ${(Math.max(0, arrival.arrivalAt - Date.now()) / 1000 * state.speed / 3600).toFixed(1)} km`;
-}
-
-function blendCoords(from, to, fraction) {
-  if (!from || !to) return to || from;
-  const progress = Math.max(0, Math.min(1, fraction));
-  return [from[0] + (to[0] - from[0]) * progress, from[1] + (to[1] - from[1]) * progress];
 }
 
 function busIcon(line) {
@@ -484,16 +504,10 @@ function syncBuses() {
     if (old) {
       const fraction = Math.min(1, (now - old.changedAt) / 4000);
       old.fromArrivalAt = old.fromArrivalAt + (old.arrival.arrivalAt - old.fromArrivalAt) * fraction;
-      if (arrival.position) {
-        old.positionFrom = old.currentPosition || old.positionTo || position;
-        old.positionTo = position;
-        old.positionChangedAt = now;
-      }
       old.arrival = arrival; old.changedAt = now; old.approach = approach;
-      old.heading = vehicleHeading(approach) ?? old.heading;
     } else {
       const marker = L.marker(latlng(position), { pane: 'vehicles', icon: busIcon(arrival.line), title: `${state.provider.name}, ${arrival.position ? 'posición publicada' : 'posición estimada'}, línea ${arrival.line}, ${arrival.destination}`, riseOnHover: true });
-      state.buses.set(arrival.id, { marker, arrival, approach, heading: vehicleHeading(approach), positionFrom: position, positionTo: position, positionChangedAt: now, currentPosition: position, fromArrivalAt: arrival.arrivalAt, changedAt: now });
+      state.buses.set(arrival.id, { marker, arrival, approach, currentPosition: position, fromArrivalAt: arrival.arrivalAt, changedAt: now });
     }
     const bus = state.buses.get(arrival.id);
     bus.marker.bindPopup(`<strong>${escape(state.provider.name)} · ${escape(arrival.line)} → ${escape(arrival.destination)}</strong><br>Hacia ${escape(state.selected.name)}<br>${escape(positionNote(arrival))}<br><small>Previsión: ${escape(arrival.raw)}${arrival.vehicleId ? ` · Vehículo ${escape(arrival.vehicleId)}` : ''}${arrival.platform ? ` · Andén ${escape(arrival.platform)}` : ''}</small>`);
@@ -503,7 +517,6 @@ function syncBuses() {
 }
 
 function drawBuses(now) {
-  const visibleBuses = [];
   for (const bus of state.buses.values()) {
     const age = now - bus.arrival.observedAt;
     const fraction = state.animate ? Math.min(1, (now - bus.changedAt) / 4000) : 1;
@@ -511,7 +524,6 @@ function drawBuses(now) {
     const clock = state.animate ? now : bus.arrival.observedAt;
     let position = bus.arrival.position ? arrivalPosition(bus.arrival, now, bus.approach)
       : age <= 90000 && now <= bus.arrival.arrivalAt + 15000 ? estimatePosition(bus.approach, arrival, clock, state.speed) : null;
-    if (position && bus.arrival.position) position = blendCoords(bus.positionFrom, position, (now - bus.positionChangedAt) / 4000);
     const visible = position && (!state.activeLine || state.activeLine === bus.arrival.line);
     if (visible) {
       bus.currentPosition = position;
@@ -519,32 +531,14 @@ function drawBuses(now) {
       if (!busGroup.hasLayer(bus.marker)) bus.marker.addTo(busGroup);
       bus.marker.getElement().dataset.positionKind = bus.arrival.position?.kind || 'estimated';
       const direction = bus.marker.getElement().querySelector('.vehicle-direction');
-      const heading = bus.heading;
+      const heading = vehicleHeading(bus.approach, bus.arrival.position ? bus.arrival : arrival, clock);
       direction.hidden = heading == null;
       if (heading != null) {
         direction.style.setProperty('--heading', `${heading}deg`);
         direction.dataset.heading = heading.toFixed(1);
       } else delete direction.dataset.heading;
       bus.marker.setOpacity(age > 45000 ? .5 : 1);
-      visibleBuses.push({ bus, point: map.latLngToLayerPoint(latlng(position)) });
     } else busGroup.removeLayer(bus.marker);
-  }
-  const clusters = [];
-  for (const item of visibleBuses) {
-    const cluster = clusters.find(group => group.some(other => item.point.distanceTo(other.point) < 28));
-    if (cluster) cluster.push(item); else clusters.push([item]);
-  }
-  for (const group of clusters) {
-    const ordered = group.slice().sort((a, b) => `${a.bus.arrival.line}-${a.bus.arrival.id}`.localeCompare(`${b.bus.arrival.line}-${b.bus.arrival.id}`, 'en', { numeric: true }));
-    ordered.forEach(({ bus }, index) => {
-      const element = bus.marker.getElement();
-      if (!element) return;
-      const angle = 2 * Math.PI * index / ordered.length - Math.PI / 4;
-      const shift = ordered.length > 1 ? [Math.round(Math.cos(angle) * 46), Math.round(Math.sin(angle) * 46)] : [0, 0];
-      const base = element.style.transform.replace(/\s+translate3d\([^)]*\)$/, '');
-      element.style.transform = shift[0] || shift[1] ? `${base} translate3d(${shift[0]}px, ${shift[1]}px, 0)` : base;
-      element.dataset.collisionCount = String(ordered.length);
-    });
   }
 }
 
@@ -614,8 +608,11 @@ function renderStop() {
   const summary = next
     ? `<button class="sheet-summary" data-expand style="${routeStyle(next.line)}"><span class="route-badge">${escape(next.line)}</span><span class="sheet-summary-copy">${escape(next.destination)}<small>Próxima llegada</small></span><span class="eta" data-eta-for="${escape(next.id)}">${etaLabel(next)}</span></button>`
     : `<div class="sheet-summary is-empty">${state.busy ? 'Consultando llegadas…' : state.lastError ? 'No se han podido consultar las llegadas' : 'Sin llegadas previstas ahora'}</div>`;
-  $('#stop-panel').innerHTML = `${heading}${summary}
-    <div id="arrival-content" class="arrival-content">${lines.length ? `<div class="stop-lines">${lines.map(chip).join('')}</div>` : ''}
+  const inactiveLines = lines.filter(line => state.lineServiceStatus.get(line) === false);
+  const inactiveSummary = inactiveLines.length ? `<p class="inactive-lines-summary" role="status">Sin servicio hoy: ${inactiveLines.map(escape).join(', ')}</p>` : '';
+  const stopLines = lines.length ? `<div class="stop-lines" role="group" aria-label="Líneas que pasan por esta parada">${lines.map(chip).join('')}</div>` : '';
+  $('#stop-panel').innerHTML = `${heading}${stopLines}${summary}${inactiveSummary}
+    <div id="arrival-content" class="arrival-content">
     <div class="section-heading"><h3>Próximas llegadas${state.activeLine ? ` · ${escape(state.activeLine)}` : ''}</h3>${refresh}</div>
     ${state.lastError ? `<div class="notice error" role="alert">${escape(state.lastError)}${state.observedAt ? '<br>Se muestra la última consulta; las posiciones caducan a los 90 s.' : ''}</div>` : ''}
     <div class="arrival-list">${arrivals.map(arrival => {
@@ -696,6 +693,33 @@ document.addEventListener('click', event => {
   if (event.target.closest('#refresh')) refreshArrivals();
 });
 $('#fit').addEventListener('click', fitBuses);
+function stopLocationFollow() {
+  if (state.locationWatch !== null) navigator.geolocation?.clearWatch(state.locationWatch);
+  state.locationWatch = null; state.followingLocation = false;
+  $('#locate').setAttribute('aria-pressed', 'false');
+  $('#locate').setAttribute('aria-label', 'Seguir mi ubicación');
+  $('#locate').title = 'Seguir mi ubicación';
+}
+$('#locate').addEventListener('click', () => {
+  if (!navigator.geolocation) return toast('Tu navegador no permite geolocalización.');
+  if (state.followingLocation) { stopLocationFollow(); return; }
+  state.followingLocation = true;
+  $('#locate').setAttribute('aria-pressed', 'true');
+  $('#locate').setAttribute('aria-label', 'Pausar seguimiento de ubicación');
+  $('#locate').title = 'Pausar seguimiento';
+  state.locationWatch = navigator.geolocation.watchPosition(position => {
+    const coords = [position.coords.longitude, position.coords.latitude], point = latlng(coords);
+    if (!locationMarker) locationMarker = L.circleMarker(point, { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
+    else locationMarker.setLatLng(point);
+    if (state.followingLocation) map.setView(visibleCenter(point, 16), 16, { animate: state.animate });
+  }, () => {
+    stopLocationFollow();
+    toast('No se ha podido obtener tu ubicación. Comprueba los permisos del navegador.');
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 });
+});
+$('#orient').addEventListener('click', () => map.resetNorth({ animate: state.animate }));
+map.on('rotate', () => { $('#orient').hidden = Math.abs(map.getBearing()) < .5; });
+map.on('dragstart', stopLocationFollow);
 $('#all-routes').addEventListener('change', event => { state.allRoutes = event.target.checked; updateLayers(); });
 $('#clear-line').addEventListener('click', () => { state.activeLine = null; renderLineList(); renderStop(); updateLayers(); drawBuses(Date.now()); });
 function toggleLines(open) { $('#line-panel').hidden = !open; $('#lines-toggle').setAttribute('aria-expanded', String(open)); }
@@ -716,17 +740,6 @@ $('#transport').addEventListener('change', event => {
   setTransport(event.target.value); configureTransport(event.target.value); saveSettings();
   if (state.stops.length) refreshArrivals(); else initialize();
 });
-$('#locate').addEventListener('click', () => {
-  if (!navigator.geolocation) return toast('Tu navegador no permite geolocalización.');
-  navigator.geolocation.getCurrentPosition(position => {
-    const coords = [position.coords.longitude, position.coords.latitude];
-    if (locationMarker) map.removeLayer(locationMarker);
-    locationMarker = L.circleMarker(latlng(coords), { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
-    map.setView(visibleCenter(latlng(coords), 16), 16);
-    const nearest = [...state.stops].sort((a, b) => distance(a.coords, coords) - distance(b.coords, coords))[0];
-    if (nearest) toast(`Parada más cercana: ${nearest.id} · ${nearest.name} (${Math.round(distance(nearest.coords, coords))} m)`);
-  }, () => toast('No se ha podido obtener tu ubicación. Puedes buscar una parada.'), { timeout: 10000, maximumAge: 60000 });
-});
 map.on('zoomend', updateLayers);
 map.on('moveend', updateStopNumberLabels);
 new ResizeObserver(() => map.invalidateSize()).observe($('#map'));
@@ -736,30 +749,33 @@ new ResizeObserver(() => {
   app.style.setProperty('--dock-h', `${$('#modebar').offsetHeight}px`);
 }).observe($('#sheet'));
 
-// Drag the sheet continuously, then settle it into its expanded or collapsed state.
+// Drag from the handle or heading while leaving the arrival list available for scrolling.
 let dragStart = null;
 const sheet = $('#sheet');
 sheet.addEventListener('pointerdown', event => {
-  if (!event.target.closest('.sheet-handle, .sheet-context, .stop-heading-copy, .stop-symbol')) return;
+  if (event.target.closest('button:not(#sheet-handle), a, input, select')) return;
+  if (!event.target.closest('.sheet-handle, .sheet-context, .stop-heading')) return;
   if (!state.selected) return;
-  dragStart = { y: event.clientY, target: event.target, moved: false };
+  dragStart = { y: event.clientY, lastY: event.clientY, lastAt: performance.now(), target: event.target, moved: false };
   sheet.classList.add('is-dragging');
   sheet.setPointerCapture?.(event.pointerId);
 });
 sheet.addEventListener('pointermove', event => {
   if (!dragStart) return;
   const delta = event.clientY - dragStart.y;
-  if (Math.abs(delta) > 4) dragStart.moved = true;
-  sheet.style.transform = `translateY(${Math.max(-260, Math.min(260, delta))}px)`;
+  if (Math.abs(delta) > 6) dragStart.moved = true;
+  dragStart.velocity = (event.clientY - dragStart.lastY) / Math.max(1, performance.now() - dragStart.lastAt);
+  dragStart.lastY = event.clientY; dragStart.lastAt = performance.now();
+  sheet.style.transform = `translateY(${Math.max(-innerHeight * .45, Math.min(innerHeight * .45, delta))}px)`;
   event.preventDefault();
 });
 sheet.addEventListener('pointerup', event => {
   if (!dragStart) return;
-  const { y, target, moved } = dragStart;
+  const { y, target, moved, velocity } = dragStart;
   const delta = event.clientY - y; dragStart = null;
   sheet.classList.remove('is-dragging'); sheet.style.removeProperty('transform');
-  if (delta < -24) setStopPanelExpanded(true);
-  else if (delta > 24) { if (state.sheetExpanded) setStopPanelExpanded(false); else clearSelection(); }
+  if (delta < -56 || velocity < -.55) setStopPanelExpanded(true);
+  else if (delta > 56 || velocity > .55) { if (state.sheetExpanded) setStopPanelExpanded(false); else clearSelection(); }
   else if (!moved && target.closest('.sheet-handle')) setStopPanelExpanded(!state.sheetExpanded);
 });
 sheet.addEventListener('pointercancel', () => { dragStart = null; sheet.classList.remove('is-dragging'); sheet.style.removeProperty('transform'); });
@@ -850,6 +866,7 @@ async function switchProvider(id, stopId) {
   for (const layer of state.routeLayers.values()) map.removeLayer(layer);
   for (const key of ['lines', 'models', 'loading', 'routeLayers', 'approaches', 'stopLayers']) state[key].clear();
   state.routeFailures.clear(); clearBuses();
+  state.lineServiceStatus.clear();
   stopGroup.eachLayer(clearStopTooltip); contextGroup.eachLayer(clearStopTooltip);
   stopGroup.clearLayers(); contextGroup.clearLayers(); selectionGroup.clearLayers();
   state.speed = provider.speed; $('#speed').value = state.speed; $('#speed-value').value = state.speed;
@@ -868,7 +885,7 @@ async function switchProvider(id, stopId) {
   await initialize();
 }
 $('#modebar').style.setProperty('--modes', providers.size);
-$('#modebar').innerHTML = [...providers.values()].map(p => `<button class="mode-tab" data-provider="${p.id}" aria-pressed="false" aria-label="${escape(p.name)}" style="--mode-color:${p.color};--mode-ink:${p.ink || '#fff'}"><span class="mode-icon">${glyphSVG(p.glyph)}</span><span>${escape(p.short || p.name)}</span></button>`).join('');
+$('#modebar').innerHTML = ['metro', 'emt', 'atmv', 'cercanias', 'valenbisi'].map(id => providers.get(id)).map(p => `<button class="mode-tab" data-provider="${p.id}" aria-pressed="false" aria-label="${escape(p.name)}" style="--mode-color:${p.color};--mode-ink:${p.ink || '#fff'}"><span class="mode-icon">${glyphSVG(p.glyph)}</span><span>${escape(p.short || p.name)}</span></button>`).join('');
 $('#context-stops').addEventListener('change', event => { state.contextStops = event.target.checked; showContextStops(); });
 
 if ('serviceWorker' in navigator && isSecureContext) addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
