@@ -1,6 +1,73 @@
 # En ruta · Transporte de València
 
-Mapa interactivo con **JavaScript vanilla**, Leaflet y tiles raster de OpenStreetMap; sin frameworks de interfaz ni claves de cartografía.
+En ruta reúne en un solo mapa la información publicada por cinco redes de transporte de València: EMT, ATMV / Met Go, Metrovalencia, Cercanías y Valenbisi. Permite buscar paradas, consultar llegadas, explorar recorridos y distinguir entre posiciones GPS, coordenadas publicadas sin hora de medición y posiciones estimadas.
+
+Es una aplicación web progresiva (PWA) hecha con **JavaScript vanilla** y Leaflet. Incluye un backend Node.js que normaliza y sirve datos de proveedores con formatos distintos, además de una API HTTP versionada para integraciones. No utiliza un framework de interfaz ni necesita una base de datos para funcionar.
+
+## Guía de lectura
+
+- [Qué ofrece y de dónde vienen los datos](#redes-disponibles)
+- [Tecnologías y arquitectura](#tecnologías)
+- [Inicio local](#arrancar)
+- [Despliegue con Docker](#despliegue-en-un-vps)
+- [API para otras aplicaciones](#api-para-otras-aplicaciones)
+- [Frontend estático](#frontend-independiente)
+- [Fuentes y decisiones técnicas](#fuentes-y-relación-con-emt-services)
+- [Pruebas y verificación](#verificación)
+- [Mapa de archivos](#archivos)
+
+## Tecnologías
+
+| Área | Tecnología | Uso |
+| --- | --- | --- |
+| Interfaz | HTML, CSS y JavaScript ES modules | Aplicación responsive, accesible y sin framework de UI |
+| Mapa | Leaflet 1.9.4, `leaflet-rotate` y teselas raster de OpenStreetMap | Capas de paradas, recorridos y vehículos; rotación táctil |
+| Backend | Node.js 22+, módulos ES y servidor HTTP nativo | Proxy de fuentes, normalización, caché y API JSON |
+| Compilación | esbuild | Agrupa el runtime del mapa y prepara el frontend estático |
+| API | OpenAPI 3.1 | Contrato de lectura bajo `/api/v1` |
+| Despliegue | Docker Compose, Nginx y Node.js | Nginx sirve `dist/` y reenvía `/api/` al backend |
+| Calidad | `node:test`, Playwright, jsdom | Pruebas unitarias, de interfaz y de proveedores |
+| Datos de Cercanías | GTFS y GTFS-RT; procesamiento de CSV y ZIP | Red estática, viajes, posiciones y actualizaciones |
+
+No se necesita una clave de cartografía. La disponibilidad de cada red sí depende de sus fuentes externas, sus políticas de acceso, CORS y conectividad. Las coordenadas de las llegadas no siempre son GPS: la aplicación presenta su procedencia y antigüedad en vez de atribuir precisión que el proveedor no ofrece.
+
+## Arquitectura
+
+```mermaid
+flowchart LR
+	Browser["Navegador · PWA"] --> Adapters["Adaptadores de proveedor"]
+	Adapters -->|"/api/providers/*"| Gateway["Gateway Node.js"]
+	Gateway --> Local["Handlers locales"]
+	Gateway --> Remote["Procesos de proveedor opcionales"]
+	Local --> Sources["EMT · Met Go · FGV · Renfe · Valenbisi"]
+	Remote --> Sources
+	Browser -->|"/api/v1 · X-API-Key"| API["API normalizada"]
+	API --> Data["Adaptadores y caché de datos"]
+	Data --> Local
+	Browser --> Tiles["Teselas OpenStreetMap"]
+```
+
+El navegador usa adaptadores para convertir cada respuesta en redes, paradas, líneas y llegadas comunes. El gateway permite ejecutar cada proveedor dentro del proceso principal o enviarlo a un servicio independiente configurado en el servidor. La API v1 reutiliza esa normalización, pero es distinta del proxy `/api/` que necesita la interfaz.
+
+### Flujo de datos
+
+1. El adaptador solicita la red, una geometría o las llegadas del elemento seleccionado.
+2. Según los ajustes, la petición va directamente al proveedor o al gateway local. El modo automático puede recurrir al proxy cuando falla una petición directa; Metrovalencia y Cercanías necesitan normalmente ese intermediario.
+3. El handler valida los parámetros, consulta la fuente permitida, normaliza la respuesta y reutiliza caché cuando corresponde.
+4. La interfaz dibuja los datos y conserva explícita la diferencia entre GPS medido, posición publicada sin timestamp y estimación calculada desde ETA y geometría.
+
+Las cachés son principalmente por proceso. Docker monta un volumen para la caché persistente que usa la API; las llegadas en tiempo real no se convierten en una base de datos histórica. No hay un historial de vehículos ni una garantía de que todos los proveedores publiquen todos sus servicios.
+
+## Qué ofrece
+
+- Buscar paradas por nombre o identificador y abrir su ficha desde el mapa.
+- Consultar líneas, próximas llegadas, recorridos y datos de disponibilidad de bicicletas.
+- Mostrar líneas de una red y, opcionalmente, paradas de otras redes para facilitar transbordos.
+- Centrar la vista en la parada, vehículos disponibles o ubicación del dispositivo, si el usuario concede permiso.
+- Instalarse como PWA; guarda recursos de la aplicación y algunas teselas ya visitadas para facilitar la carga posterior.
+- Elegir conexión automática, directa desde el navegador o mediante el servidor; ajustar velocidad de estimación y animaciones.
+
+La ubicación del dispositivo solo centra el mapa y no se envía al backend. La geolocalización del navegador requiere `localhost` o HTTPS.
 
 ## Redes disponibles
 
@@ -20,15 +87,14 @@ Las paradas tienen color, forma y letra diferenciados: EMT verde/círculo, ATMV 
 
 ## Arrancar
 
-Requiere Node.js 22 o posterior:
+Requiere Node.js 22 o posterior y npm:
 
 ```bash
-cd /home/maicol/test-map-emt
-npm install
+npm ci
 npm start
 ```
 
-Abre **http://localhost:3000**. Para probar directamente una parada: **http://localhost:3000/?stop=167**.
+Abre **http://localhost:3000**. Para probar directamente una parada EMT: **http://localhost:3000/?stop=167**.
 
 Ejemplos de las otras redes:
 
@@ -37,9 +103,9 @@ Ejemplos de las otras redes:
 - `http://localhost:3000/?provider=cercanias&stop=65000`
 - `http://localhost:3000/?provider=valenbisi&stop=1`
 
-`npm start` carga los servicios como módulos separados dentro del servidor. Cercanías prepara el subconjunto de València desde el GTFS nacional en la primera consulta, por lo que esa carga tarda más que las siguientes; se conserva en memoria durante 12 horas.
+`npm start` ejecuta primero `npm run build:map` y después inicia el servidor local. Los handlers de los proveedores se cargan como módulos separados dentro del proceso. Cercanías prepara el subconjunto de València desde el GTFS nacional en la primera consulta, por lo que esa carga tarda más que las siguientes. En local, la caché vive en el proceso y se pierde al reiniciar; Docker configura un volumen para la caché persistente que usa la API.
 
-Valenbisi se obtiene mediante un navegador headless que carga la página pública de mapping y captura la respuesta de estaciones que usa la propia web. No requiere configurar una URL ni una API key en `.env`; el navegador y sus dependencias se instalan durante la construcción de Docker. La interfaz muestra bicicletas y anclajes disponibles, con una caché de 45 segundos.
+Valenbisi usa la API de JCDecaux si se configura `VALENBISI_API_KEY`; si no, o si esa consulta falla, Chromium carga la página pública de mapping y captura la respuesta de estaciones que utiliza la web oficial. La construcción de Docker instala Chromium y sus dependencias. Las estaciones se guardan en caché durante 45 segundos y el detalle de bicicletas de una estación durante 60 segundos.
 
 - Busca por número o nombre, o pulsa cualquier parada del mapa.
 - La parada seleccionada centra el mapa y muestra sus líneas y próximas llegadas; «Ver en mapa» enfoca el vehículo.
@@ -67,7 +133,7 @@ Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a 
 
 	Edita `.env` y coloca el valor generado en `API_KEYS`. Puedes indicar varias claves separadas por comas. Protege el archivo con `chmod 600 .env`; no lo subas al repositorio ni incluyas las claves en el código del navegador. Las variables de entorno de Docker también son visibles para los administradores del host.
 
-	Para activar Valenbisi, añade también `VALENBISI_FEED_URL` con la URL completa del feed que compartiste. Si se deja vacío, el resto del mapa arranca normalmente y Valenbisi muestra que no tiene fuente configurada.
+	Valenbisi funciona sin variables adicionales mediante la página pública. Si tienes acceso a la API de JCDecaux, puedes configurar `VALENBISI_API_KEY` y, si el contrato usa otro identificador, `VALENBISI_CONTRACT` (por defecto `valence`). `VALENBISI_BIKES_AUTH` es opcional y permite configurar la autorización para la consulta de detalle de bicicletas.
 
 2. Arranca los servicios:
 
@@ -80,7 +146,7 @@ Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a 
 
 4. Para producción, usa un dominio y HTTPS mediante un proxy inverso existente con certificado válido. Conecta ese proxy a `proxy-net` y configura su destino como `http://en-ruta-frontend:80`, conservando las rutas completas, incluidas `/api/`. Ajusta su tiempo de lectura a al menos 150 segundos para la carga inicial de Cercanías. Establece `BIND_ADDRESS=127.0.0.1` en `.env` y vuelve a ejecutar `docker compose up -d` para no exponer el puerto de prueba a Internet. La configuración incluida no solicita certificados ni habilita HTTPS por sí sola. La geolocalización móvil y el envío seguro de claves requieren HTTPS.
 
-`PROXY_NETWORK` cambia el nombre de la red Docker. `VALENBISI_FEED_URL` es opcional para arrancar, pero necesario para disponibilidad de bicicletas. `API_CORS_ORIGINS` contiene los orígenes web autorizados exactos, separados por comas, por ejemplo `https://cliente.example`; vacío no autoriza solicitudes CORS. Las peticiones servidor a servidor no necesitan CORS. `API_RATE_LIMIT` limita las peticiones a `/api/v1` por clave y minuto, por proceso; el valor predeterminado es 120.
+`PROXY_NETWORK` cambia el nombre de la red Docker. `VALENBISI_API_KEY` y `VALENBISI_CONTRACT` configuran la fuente JCDecaux; son opcionales porque hay un fallback a la página pública. `VALENBISI_BIKES_AUTH` es opcional para las peticiones de detalle de bicicletas. `API_CORS_ORIGINS` contiene los orígenes web autorizados exactos, separados por comas, por ejemplo `https://cliente.example`; vacío no autoriza solicitudes CORS. Las peticiones servidor a servidor no necesitan CORS. `API_RATE_LIMIT` limita las peticiones a `/api/v1` por clave y minuto, por proceso; el valor predeterminado es 120.
 
 Comprueba desde el propio VPS, sustituyendo la clave de forma segura en tu terminal:
 
@@ -212,7 +278,7 @@ public/js/arrivals.js    Parsing, horas de Madrid y emparejamiento de llegadas
 public/js/geo.js         Recorridos, sentidos, distancias e interpolación
 public/js/app.js         Mapa, interfaz, selección, polling y animación
 server.mjs              Servidor estático y gateway sin lógica de operadores
-services/               EMT, ATMV, Metro y Cercanías en módulos ejecutables por separado
+services/               Cinco proveedores, gateway, API v1 y handlers por operador
 scripts/build.mjs       Generación del frontend estático autónomo
 test/                   Pruebas geográficas, de servidor y navegador
 ```
