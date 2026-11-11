@@ -53,15 +53,17 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
 }).on('tileerror', () => toast('El mapa base no está disponible. Comprueba tu conexión.')).addTo(map);
-map.createPane('routes'); map.getPane('routes').style.zIndex = 410;
-map.createPane('stops'); map.getPane('stops').style.zIndex = 430;
+const rotatePane = map.getPane('rotatePane');
+map.createPane('routes', rotatePane); map.getPane('routes').style.zIndex = 410;
+map.createPane('stops', rotatePane); map.getPane('stops').style.zIndex = 430;
+map.createPane('railStops'); map.getPane('railStops').style.zIndex = 430;
 map.createPane('vehicles'); map.getPane('vehicles').style.zIndex = 660;
 map.createPane('selection'); map.getPane('selection').style.zIndex = 670;
 const stopGroup = L.layerGroup().addTo(map);
 const selectionGroup = L.layerGroup().addTo(map);
 const busGroup = L.layerGroup().addTo(map);
 const contextGroup = L.layerGroup().addTo(map);
-let locationMarker = null, toastTimeout;
+let locationMarker = null, latestLocation = null, toastTimeout;
 
 map.on('click', event => {
   if (event.layer || !(event.originalEvent?.target instanceof HTMLCanvasElement)) return;
@@ -296,7 +298,7 @@ function showStops() {
 
 function stopMarker(stop, provider) {
   const marker = provider.kind === 'train'
-    ? L.marker(latlng(stop.coords), { pane: 'stops', icon: L.divIcon({ className: `provider-stop provider-stop-${provider.id}`, iconSize: [40, 40], iconAnchor: [20, 20], html: `<span class="stop-pin" style="${providerStyle(provider)}">${glyphSVG(provider.glyph)}</span>` }), title: `${provider.name} · ${stop.name}` })
+    ? L.marker(latlng(stop.coords), { pane: 'railStops', icon: L.divIcon({ className: `provider-stop provider-stop-${provider.id}`, iconSize: [40, 40], iconAnchor: [20, 20], html: `<span class="stop-pin" style="${providerStyle(provider)}">${glyphSVG(provider.glyph)}</span>` }), title: `${provider.name} · ${stop.name}` })
     : new IconStop(latlng(stop.coords), { pane: 'stops', renderer: stopRenderer, className: `stop-marker provider-stop-${provider.id}`, radius: stopRadius(map.getZoom(), false), color: '#ffffff', weight: 2, opacity: 1, fillColor: provider.color, fillOpacity: 1, ink: provider.ink || '#fff', glyph: provider.glyph });
   marker._stopLabel = { stop, provider };
   marker.bindTooltip(escape(provider.kind === 'bus' ? stop.id : stop.name), { permanent: true, interactive: true, direction: 'right', offset: [14, 0], className: `stop-map-label${provider.id === 'emt' ? ' stop-number-tooltip' : ''}${provider.kind === 'bike' ? ' is-bike' : ''}` });
@@ -342,7 +344,7 @@ async function selectStop(stop) {
   const url = new URL(location.href); url.searchParams.set('stop', stop.id); url.searchParams.set('provider', state.provider.id); history.replaceState(null, '', url);
   renderLineList(); renderStop(); updateLayers();
   const zoom = Math.max(map.getZoom(), 17);
-  map.flyTo(visibleCenter(latlng(stop.coords), zoom), zoom, { duration: .7, animate: state.animate });
+  map.flyTo(visibleCenter(latlng(stop.coords), zoom), zoom, { duration: .85, easeLinearity: .25, animate: state.animate });
   await refreshArrivals();
 }
 
@@ -456,8 +458,8 @@ function vehicleHeading(approach, arrival, now) {
   const tangent = pathTangent(path, offset);
   if (!tangent) return null;
   const [from, to] = tangent;
-  const start = map.latLngToLayerPoint(latlng(from));
-  const end = map.latLngToLayerPoint(latlng(to));
+  const start = map.latLngToContainerPoint(latlng(from));
+  const end = map.latLngToContainerPoint(latlng(to));
   return Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
 }
 
@@ -691,17 +693,23 @@ document.addEventListener('click', event => {
   if (event.target.closest('#refresh')) refreshArrivals();
 });
 $('#fit').addEventListener('click', fitBuses);
+function updateLocation(position) {
+  latestLocation = [position.coords.longitude, position.coords.latitude];
+  const point = latlng(latestLocation);
+  if (!locationMarker) locationMarker = L.circleMarker(point, { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
+  else locationMarker.setLatLng(point);
+}
+if (navigator.geolocation?.watchPosition) navigator.geolocation.watchPosition(updateLocation, () => {}, { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 });
 $('#locate').addEventListener('click', () => {
   if (!navigator.geolocation?.getCurrentPosition) return toast('Tu navegador no permite geolocalización.');
-  navigator.geolocation.getCurrentPosition(position => {
-    const coords = [position.coords.longitude, position.coords.latitude], point = latlng(coords);
-    if (!locationMarker) locationMarker = L.circleMarker(point, { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
-    else locationMarker.setLatLng(point);
+  const center = position => {
+    if (position) updateLocation(position);
+    if (!latestLocation) return;
     const zoom = map.getZoom();
-    map.flyTo(visibleCenter(point, zoom), zoom, { duration: .6, animate: state.animate });
-  }, () => {
-    toast('No se ha podido obtener tu ubicación. Comprueba los permisos del navegador.');
-  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 });
+    map.flyTo(visibleCenter(latlng(latestLocation), zoom), zoom, { duration: .8, easeLinearity: .25, animate: state.animate });
+  };
+  if (latestLocation) center();
+  else navigator.geolocation.getCurrentPosition(center, () => toast('No se ha podido obtener tu ubicación. Comprueba los permisos del navegador.'), { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 });
 });
 $('#orient').addEventListener('click', () => map.resetNorth({ animate: state.animate }));
 map.on('rotate', () => {
@@ -741,10 +749,11 @@ new ResizeObserver(() => {
 let dragStart = null;
 const sheet = $('#sheet');
 sheet.addEventListener('pointerdown', event => {
+  if (innerWidth >= 900) return;
   if (event.target.closest('button:not(#sheet-handle), a, input, select')) return;
   if (!event.target.closest('.sheet-handle, .sheet-context, .stop-heading')) return;
   if (!state.selected) return;
-  dragStart = { y: event.clientY, lastY: event.clientY, lastAt: performance.now(), target: event.target, moved: false };
+  dragStart = { y: event.clientY, lastY: event.clientY, lastAt: performance.now(), height: sheet.offsetHeight, target: event.target, moved: false };
   sheet.classList.add('is-dragging');
   sheet.setPointerCapture?.(event.pointerId);
 });
@@ -754,19 +763,21 @@ sheet.addEventListener('pointermove', event => {
   if (Math.abs(delta) > 6) dragStart.moved = true;
   dragStart.velocity = (event.clientY - dragStart.lastY) / Math.max(1, performance.now() - dragStart.lastAt);
   dragStart.lastY = event.clientY; dragStart.lastAt = performance.now();
-  sheet.style.transform = `translateY(${Math.max(-innerHeight * .45, Math.min(innerHeight * .45, delta))}px)`;
+  sheet.classList.toggle('is-drag-expanding', !state.sheetExpanded && delta < -6);
+  const maximum = Number.parseFloat(getComputedStyle(sheet).maxHeight) || innerHeight * .85;
+  sheet.style.height = `${Math.max(84, Math.min(maximum, dragStart.height - delta))}px`;
   event.preventDefault();
 });
 sheet.addEventListener('pointerup', event => {
   if (!dragStart) return;
   const { y, target, moved, velocity } = dragStart;
   const delta = event.clientY - y; dragStart = null;
-  sheet.classList.remove('is-dragging'); sheet.style.removeProperty('transform');
+  sheet.classList.remove('is-dragging', 'is-drag-expanding'); sheet.style.removeProperty('height');
   if (delta < -56 || velocity < -.55) setStopPanelExpanded(true);
   else if (delta > 56 || velocity > .55) { if (state.sheetExpanded) setStopPanelExpanded(false); else clearSelection(); }
   else if (!moved && target.closest('.sheet-handle')) setStopPanelExpanded(!state.sheetExpanded);
 });
-sheet.addEventListener('pointercancel', () => { dragStart = null; sheet.classList.remove('is-dragging'); sheet.style.removeProperty('transform'); });
+sheet.addEventListener('pointercancel', () => { dragStart = null; sheet.classList.remove('is-dragging', 'is-drag-expanding'); sheet.style.removeProperty('height'); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) clearTimeout(state.poll);
   else { if (!state.busy) refreshArrivals(); if (Date.now() - state.routeRefresh > 600000 && !state.loading.size) loadAllRoutes(); }

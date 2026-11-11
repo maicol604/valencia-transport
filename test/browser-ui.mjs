@@ -8,8 +8,11 @@ if (server) await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = (process.env.BASE_URL || `http://127.0.0.1:${server.address().port}`).replace(/\/$/, '');
 const browser = await chromium.launch({ headless: true });
 await mkdir(new URL('../test-results/', import.meta.url), { recursive: true });
+const allViewports = [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 640 }];
+const requestedWidth = Number(process.env.UI_VIEWPORT);
+const viewports = requestedWidth ? allViewports.filter(viewport => viewport.width === requestedWidth) : allViewports;
 try {
-  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 640 }]) {
+  for (const viewport of viewports) {
     const page = await browser.newPage({ viewport, reducedMotion: 'reduce', hasTouch: true, isMobile: viewport.width <= 600, deviceScaleFactor: viewport.width <= 600 ? 3 : 1 });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -23,9 +26,15 @@ try {
       Object.defineProperty(navigator, 'geolocation', { configurable: true, value: {
         getCurrentPosition(success) {
           window.__geoRequests = (window.__geoRequests || 0) + 1;
-          window.__geoSuccess = success;
           success({ coords: { longitude: -0.38, latitude: 39.47, accuracy: 10 } });
         },
+        watchPosition(success) {
+          window.__geoWatchRequests = (window.__geoWatchRequests || 0) + 1;
+          window.__geoWatchSuccess = success;
+          success({ coords: { longitude: -0.381, latitude: 39.468, accuracy: 10 } });
+          return 1;
+        },
+        clearWatch() {},
       } });
     });
     await page.route('**/*', async route => {
@@ -59,12 +68,23 @@ try {
         if (url.pathname.endsWith('/positions')) return route.fulfill({ json: { header: { timestamp: now }, entity: [] } });
         return route.fulfill({ json: { header: { timestamp: now }, entity: [] } });
       }
+      if (url.pathname.startsWith('/api/providers/valenbisi/')) return route.fulfill({ json: { stations: [] } });
+      if (url.hostname === 'tile.openstreetmap.org') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1sAAAAASUVORK5CYII=', 'base64') });
       return route.continue();
     });
     await page.goto(`${base}/?stop=167`);
     await page.locator('#stop-name').waitFor();
+    await page.locator('.arrival-card').first().waitFor({ state: 'attached' });
+    await page.waitForTimeout(100);
     await page.waitForFunction(() => window.__appMap.getZoom() >= 17);
-    assert.ok(await page.evaluate(() => Math.abs(window.__appMap.getZoom() - 17) < .1), 'selected stop stays at close zoom instead of fitting all vehicles');
+    assert.ok(await page.evaluate(() => Math.abs(window.__appMap.getZoom() - 17) < .1), 'selected stop stays at close zoom after arrivals load instead of fitting all vehicles');
+    assert.ok(await page.evaluate(() => {
+      const map = window.__appMap, rotatePane = map.getPane('rotatePane'), mapPane = map.getPane('mapPane');
+      return ['routes', 'stops'].every(name => map.getPane(name).parentElement === rotatePane)
+        && ['railStops', 'vehicles', 'selection'].every(name => map.getPane(name).parentElement === mapPane);
+    }), 'vector and canvas layers rotate while DOM markers use Leaflet rotation-aware positioning');
+    assert.equal(await page.waitForFunction(() => window.__geoWatchRequests === 1).then(() => true), true, 'location tracking starts by default');
+    assert.ok(await page.evaluate(() => Object.values(window.__appMap._layers).some(layer => layer instanceof window.L.CircleMarker && layer.options.radius === 8 && Math.abs(layer.getLatLng().lng + .381) < .001)), 'default location tracking displays the current position');
     assert.deepEqual(await page.locator('.mode-tab').evaluateAll(tabs => tabs.map(tab => tab.dataset.provider)), ['metro', 'emt', 'atmv', 'cercanias', 'valenbisi'], 'transport tabs follow the requested order');
     assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected stop details stay in the drawer');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'page fits viewport');
@@ -76,7 +96,16 @@ try {
     await page.evaluate(() => Object.values(window.__appMap._layers).find(layer => layer._stopLabel?.stop.id === '167').fire('click'));
     await page.waitForFunction(() => document.querySelector('#stop-name')?.textContent === 'Centre');
     if (viewport.width <= 600) {
-      await page.locator('#stop-panel-toggle').click();
+      const handle = await page.locator('#sheet-handle').boundingBox();
+      const initialSheet = await page.locator('#sheet').evaluate(element => ({ height: element.getBoundingClientRect().height, bottom: element.getBoundingClientRect().bottom }));
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2 - 80, { steps: 4 });
+      const draggedSheet = await page.locator('#sheet').evaluate(element => ({ height: element.getBoundingClientRect().height, bottom: element.getBoundingClientRect().bottom }));
+      assert.ok(draggedSheet.height > initialSheet.height + 30 && Math.abs(draggedSheet.bottom - initialSheet.bottom) < 1, 'drawer grows from its fixed bottom edge while dragging');
+      assert.equal(await page.locator('#arrival-content').isVisible(), true, 'drawer content is visible during expansion');
+      await page.mouse.up();
+      await page.waitForFunction(() => document.querySelector('#stop-panel-toggle')?.getAttribute('aria-expanded') === 'true');
       assert.equal(await page.locator('#stop-panel-toggle').getAttribute('aria-expanded'), 'true');
       assert.ok(await page.locator('.map-shell').evaluate(element => element.getBoundingClientRect().height >= 205));
       await page.locator('#stop-panel-toggle').click();
@@ -156,29 +185,31 @@ try {
     await page.locator('[data-stop="B"]').click();
     assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected rail stop has no map tooltip');
     await page.evaluate(() => window.__appMap.setBearing(35));
-    assert.ok(await page.evaluate(() => {
+    const stationOffset = await page.evaluate(() => {
       const map = window.__appMap;
-      const marker = Object.values(map._layers).find(layer => layer._stopLabel?.provider.kind === 'train');
+      const marker = Object.values(map._layers).find(layer => layer._stopLabel?.provider.id === 'cercanias' && layer._stopLabel.stop.id === 'B');
       const point = map.latLngToContainerPoint(marker.getLatLng()), rect = marker.getElement().getBoundingClientRect(), mapRect = map.getContainer().getBoundingClientRect();
-      return Math.hypot(point.x - (rect.left - mapRect.left + rect.width / 2), point.y - (rect.top - mapRect.top + rect.height / 2)) < 2;
-    }), 'station marker remains aligned with its coordinates while the map rotates');
+      return Math.hypot(point.x - (rect.left - mapRect.left + rect.width / 2), point.y - (rect.top - mapRect.top + rect.height / 2));
+    });
+    assert.ok(stationOffset < 2, `station marker remains aligned with its coordinates while the map rotates (${stationOffset.toFixed(2)} px)`);
     await page.locator('#orient').waitFor();
-    await page.locator('#orient').click();
-    await page.waitForFunction(() => Math.abs(window.__appMap.getBearing()) < .5);
+    await page.evaluate(() => window.__geoWatchSuccess({ coords: { longitude: -.38, latitude: 39.47, accuracy: 10 } }));
     await page.locator('#locate').click();
-    await page.waitForFunction(() => window.__geoRequests === 1);
-    assert.equal(await page.locator('#locate').getAttribute('aria-pressed'), null, 'location button is a one-shot action, not a follow toggle');
+    assert.equal(await page.locator('#locate').getAttribute('aria-pressed'), null, 'location button does not toggle tracking');
+    assert.equal(await page.evaluate(() => window.__geoRequests || 0), 0, 'centering uses the already-tracked location');
     assert.ok(await page.evaluate(() => {
       const marker = Object.values(window.__appMap._layers).find(layer => layer instanceof window.L.CircleMarker && layer.options.radius === 8);
       return marker && Math.abs(marker.getLatLng().lng + .38) < .001 && Math.abs(marker.getLatLng().lat - 39.47) < .001;
-    }), 'location marker shows the latest one-shot position');
+    }), 'location marker follows updates in the background');
     assert.ok(await page.evaluate(() => {
       const map = window.__appMap, point = map.latLngToContainerPoint([39.47, -.38]);
       const sheet = document.querySelector('#sheet').getBoundingClientRect(), top = document.querySelector('.topbar').getBoundingClientRect(), size = map.getSize();
       const insets = innerWidth >= 900 ? { left: sheet.right + 16, top: 24, right: 80, bottom: 24 } : { left: 16, top: top.bottom + 12, right: 64, bottom: innerHeight - sheet.top + 16 };
       const center = [(insets.left + size.x - insets.right) / 2, (insets.top + size.y - insets.bottom) / 2];
       return Math.hypot(point.x - center[0], point.y - center[1]) < 2;
-    }), 'location action centers the current position in the visible map area');
+    }), 'location action centers the current position in the visible map area without resetting map rotation');
+    await page.locator('#orient').click();
+    await page.waitForFunction(() => Math.abs(window.__appMap.getBearing()) < .5);
     assert.deepEqual(errors, [], 'no browser exceptions');
     await page.close();
   }

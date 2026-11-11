@@ -128,6 +128,8 @@ svg{display:block}
 .stop-panel{min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
 .stop-panel::-webkit-scrollbar{display:none}
 .app:not(.is-stop-expanded) .arrival-content{display:none}
+.app:not(.is-stop-expanded) .sheet.is-drag-expanding .arrival-content{display:block}
+.sheet.is-drag-expanding .sheet-summary{display:none}
 .app.is-stop-expanded .sheet{height:min(72dvh,calc(100dvh - var(--dock-h) - var(--safe-top) - 80px))}
 .app.is-stop-expanded .sheet-summary{display:none}
 .sheet.is-dragging{transition:none}

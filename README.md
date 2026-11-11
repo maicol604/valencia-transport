@@ -44,7 +44,7 @@ Valenbisi se obtiene mediante un navegador headless que carga la página públic
 - Busca por número o nombre, o pulsa cualquier parada del mapa.
 - La parada seleccionada centra el mapa y muestra sus líneas y próximas llegadas; «Ver en mapa» enfoca el vehículo.
 - Las rutas de la parada seleccionada se destacan; «Líneas» permite activar toda la red o las paradas de otros operadores.
-- «Centrar parada y buses» encuadra las posiciones de la selección; el localizador obtiene tu ubicación una vez y centra el mapa sin activar seguimiento continuo.
+- «Centrar parada y buses» encuadra las posiciones de la selección; la ubicación se actualiza en segundo plano tras conceder permiso y el localizador solo centra el mapa.
 - El mapa se puede girar con dos dedos; aparece una brújula para volver al norte. En móvil, la ficha también se expande o contrae con un gesto vertical.
 - Met Go indica «Sin servicio hoy» solo cuando su fuente confirma que una línea no opera. EMT, Metrovalencia y Cercanías no publican aquí calendarios suficientes para confirmar ese estado.
 - Configuración: velocidad media de 6–60 km/h para posiciones estimadas, animación y conexión directa/automática/proxy.
@@ -236,4 +236,4 @@ La prueba multimodal añade capturas `atmv.png`, `metro.png`, `cercanias.png`, `
 
 ## Cartografía y atribución
 
-Leaflet y OpenStreetMap son open source. Los tiles se cargan desde `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, sin API key y con atribución visible. El servicio público no ofrece SLA ni está pensado para cargas altas; para producción con mucho tráfico debe usarse un proveedor compatible con la política de tiles o una instancia propia. La aplicación no es un producto oficial de ninguno de los operadores.
+Leaflet y OpenStreetMap son open source. Los tiles se cargan desde `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, sin API key y con atribución visible. La PWA guarda las teselas de València que ya se han visitado (hasta 900, con un máximo de siete días); no descarga el mapa por adelantado. El servicio público no ofrece SLA ni está pensado para cargas altas; para producción con mucho tráfico debe usarse un proveedor compatible con la política de tiles o una instancia propia. La aplicación no es un producto oficial de ninguno de los operadores.
