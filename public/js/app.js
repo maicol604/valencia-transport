@@ -15,9 +15,9 @@ const state = {
   stopLayers: new Map(), buses: new Map(), approaches: new Map(), selected: null, arrivals: [],
   activeLine: null, allRoutes: false, sheetExpanded: false, speed: 12, advancedSettings: false, animate: !matchMedia('(prefers-reduced-motion: reduce)').matches,
   generation: 0, controller: null, poll: null, observedAt: null, lastError: '', busy: false,
-  routeFailures: new Set(), source: 'direct', routeRefresh: 0, pendingVehicleFit: false,
+  routeFailures: new Set(), source: 'direct', routeRefresh: 0,
   provider: providers.get('emt'), epoch: 0, networks: new Map(), contextStops: false, contextEpoch: 0,
-  lineServiceStatus: new Map(), locationWatch: null, followingLocation: false,
+  lineServiceStatus: new Map(),
 };
 
 const map = L.map('map', { zoomControl: false, preferCanvas: true, minZoom: 10, maxZoom: 19, rotate: true, touchRotate: true, rotateControl: false }).setView([39.472, -0.370], 13);
@@ -333,7 +333,6 @@ async function selectStop(stop) {
   if (!stop) return;
   state.generation++; state.controller?.abort(); clearTimeout(state.poll);
   state.selected = stop; state.arrivals = []; state.observedAt = null; state.lastError = ''; state.busy = false; state.sheetExpanded = false;
-  state.pendingVehicleFit = true;
   $('#workspace').classList.remove('is-stop-expanded');
   $('#workspace').classList.add('has-stop');
   state.activeLine = null; state.approaches.clear(); clearBuses(); selectionGroup.clearLayers();
@@ -342,7 +341,7 @@ async function selectStop(stop) {
   for (const [line, models] of state.models) state.approaches.set(line, state.provider.getApproach(models, stop));
   const url = new URL(location.href); url.searchParams.set('stop', stop.id); url.searchParams.set('provider', state.provider.id); history.replaceState(null, '', url);
   renderLineList(); renderStop(); updateLayers();
-  const zoom = Math.max(map.getZoom(), 16);
+  const zoom = Math.max(map.getZoom(), 17);
   map.flyTo(visibleCenter(latlng(stop.coords), zoom), zoom, { duration: .7, animate: state.animate });
   await refreshArrivals();
 }
@@ -355,7 +354,10 @@ function mapInsets() {
 }
 function visibleCenter(target, zoom) {
   const insets = mapInsets();
-  const point = map.project(target, zoom).subtract([(insets.left - insets.right) / 2, (insets.top - insets.bottom) / 2]);
+  const bearing = map.getBearing() * Math.PI / 180;
+  const x = (insets.left - insets.right) / 2, y = (insets.top - insets.bottom) / 2;
+  const offset = [x * Math.cos(bearing) + y * Math.sin(bearing), -x * Math.sin(bearing) + y * Math.cos(bearing)];
+  const point = map.project(target, zoom).subtract(offset);
   return map.unproject(point, zoom);
 }
 
@@ -424,10 +426,6 @@ async function loadStopRoutes(provider, stop, generation, incoming, signal) {
       syncBuses(); renderStop(); updateLayers();
     }
   }));
-  if (generation === state.generation && state.pendingVehicleFit) {
-    state.pendingVehicleFit = false;
-    fitBuses();
-  }
 }
 
 function clearBuses() { busGroup.clearLayers(); state.buses.clear(); }
@@ -693,33 +691,23 @@ document.addEventListener('click', event => {
   if (event.target.closest('#refresh')) refreshArrivals();
 });
 $('#fit').addEventListener('click', fitBuses);
-function stopLocationFollow() {
-  if (state.locationWatch !== null) navigator.geolocation?.clearWatch(state.locationWatch);
-  state.locationWatch = null; state.followingLocation = false;
-  $('#locate').setAttribute('aria-pressed', 'false');
-  $('#locate').setAttribute('aria-label', 'Seguir mi ubicación');
-  $('#locate').title = 'Seguir mi ubicación';
-}
 $('#locate').addEventListener('click', () => {
-  if (!navigator.geolocation) return toast('Tu navegador no permite geolocalización.');
-  if (state.followingLocation) { stopLocationFollow(); return; }
-  state.followingLocation = true;
-  $('#locate').setAttribute('aria-pressed', 'true');
-  $('#locate').setAttribute('aria-label', 'Pausar seguimiento de ubicación');
-  $('#locate').title = 'Pausar seguimiento';
-  state.locationWatch = navigator.geolocation.watchPosition(position => {
+  if (!navigator.geolocation?.getCurrentPosition) return toast('Tu navegador no permite geolocalización.');
+  navigator.geolocation.getCurrentPosition(position => {
     const coords = [position.coords.longitude, position.coords.latitude], point = latlng(coords);
     if (!locationMarker) locationMarker = L.circleMarker(point, { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
     else locationMarker.setLatLng(point);
-    if (state.followingLocation) map.setView(visibleCenter(point, 16), 16, { animate: state.animate });
+    const zoom = map.getZoom();
+    map.flyTo(visibleCenter(point, zoom), zoom, { duration: .6, animate: state.animate });
   }, () => {
-    stopLocationFollow();
     toast('No se ha podido obtener tu ubicación. Comprueba los permisos del navegador.');
   }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 });
 });
 $('#orient').addEventListener('click', () => map.resetNorth({ animate: state.animate }));
-map.on('rotate', () => { $('#orient').hidden = Math.abs(map.getBearing()) < .5; });
-map.on('dragstart', stopLocationFollow);
+map.on('rotate', () => {
+  $('#orient').hidden = Math.abs(map.getBearing()) < .5;
+  updateStopNumberLabels();
+});
 $('#all-routes').addEventListener('change', event => { state.allRoutes = event.target.checked; updateLayers(); });
 $('#clear-line').addEventListener('click', () => { state.activeLine = null; renderLineList(); renderStop(); updateLayers(); drawBuses(Date.now()); });
 function toggleLines(open) { $('#line-panel').hidden = !open; $('#lines-toggle').setAttribute('aria-expanded', String(open)); }

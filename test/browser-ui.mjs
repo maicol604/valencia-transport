@@ -21,12 +21,11 @@ try {
         value.Map.prototype.initialize = function(...args) { const result = initialize.apply(this, args); window.__appMap = this; return result; };
       } });
       Object.defineProperty(navigator, 'geolocation', { configurable: true, value: {
-        watchPosition(success) {
+        getCurrentPosition(success) {
+          window.__geoRequests = (window.__geoRequests || 0) + 1;
           window.__geoSuccess = success;
           success({ coords: { longitude: -0.38, latitude: 39.47, accuracy: 10 } });
-          return 1;
         },
-        clearWatch() { window.__geoCleared = true; },
       } });
     });
     await page.route('**/*', async route => {
@@ -64,6 +63,8 @@ try {
     });
     await page.goto(`${base}/?stop=167`);
     await page.locator('#stop-name').waitFor();
+    await page.waitForFunction(() => window.__appMap.getZoom() >= 17);
+    assert.ok(await page.evaluate(() => Math.abs(window.__appMap.getZoom() - 17) < .1), 'selected stop stays at close zoom instead of fitting all vehicles');
     assert.deepEqual(await page.locator('.mode-tab').evaluateAll(tabs => tabs.map(tab => tab.dataset.provider)), ['metro', 'emt', 'atmv', 'cercanias', 'valenbisi'], 'transport tabs follow the requested order');
     assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected stop details stay in the drawer');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'page fits viewport');
@@ -155,18 +156,29 @@ try {
     await page.locator('[data-stop="B"]').click();
     assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected rail stop has no map tooltip');
     await page.evaluate(() => window.__appMap.setBearing(35));
+    assert.ok(await page.evaluate(() => {
+      const map = window.__appMap;
+      const marker = Object.values(map._layers).find(layer => layer._stopLabel?.provider.kind === 'train');
+      const point = map.latLngToContainerPoint(marker.getLatLng()), rect = marker.getElement().getBoundingClientRect(), mapRect = map.getContainer().getBoundingClientRect();
+      return Math.hypot(point.x - (rect.left - mapRect.left + rect.width / 2), point.y - (rect.top - mapRect.top + rect.height / 2)) < 2;
+    }), 'station marker remains aligned with its coordinates while the map rotates');
     await page.locator('#orient').waitFor();
     await page.locator('#orient').click();
     await page.waitForFunction(() => Math.abs(window.__appMap.getBearing()) < .5);
     await page.locator('#locate').click();
-    assert.equal(await page.locator('#locate').getAttribute('aria-pressed'), 'true', 'location button enables follow mode');
-    await page.evaluate(() => window.__geoSuccess({ coords: { longitude: -0.379, latitude: 39.471, accuracy: 10 } }));
+    await page.waitForFunction(() => window.__geoRequests === 1);
+    assert.equal(await page.locator('#locate').getAttribute('aria-pressed'), null, 'location button is a one-shot action, not a follow toggle');
     assert.ok(await page.evaluate(() => {
       const marker = Object.values(window.__appMap._layers).find(layer => layer instanceof window.L.CircleMarker && layer.options.radius === 8);
-      return marker && Math.abs(marker.getLatLng().lng + .379) < .001;
-    }), 'follow mode updates the location marker');
-    await page.locator('#locate').click();
-    assert.equal(await page.locator('#locate').getAttribute('aria-pressed'), 'false', 'location button disables follow mode');
+      return marker && Math.abs(marker.getLatLng().lng + .38) < .001 && Math.abs(marker.getLatLng().lat - 39.47) < .001;
+    }), 'location marker shows the latest one-shot position');
+    assert.ok(await page.evaluate(() => {
+      const map = window.__appMap, point = map.latLngToContainerPoint([39.47, -.38]);
+      const sheet = document.querySelector('#sheet').getBoundingClientRect(), top = document.querySelector('.topbar').getBoundingClientRect(), size = map.getSize();
+      const insets = innerWidth >= 900 ? { left: sheet.right + 16, top: 24, right: 80, bottom: 24 } : { left: 16, top: top.bottom + 12, right: 64, bottom: innerHeight - sheet.top + 16 };
+      const center = [(insets.left + size.x - insets.right) / 2, (insets.top + size.y - insets.bottom) / 2];
+      return Math.hypot(point.x - center[0], point.y - center[1]) < 2;
+    }), 'location action centers the current position in the visible map area');
     assert.deepEqual(errors, [], 'no browser exceptions');
     await page.close();
   }
