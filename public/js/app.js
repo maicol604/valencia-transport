@@ -4,12 +4,15 @@ import { adjustedArrivalAt, reconcileArrivals } from './arrivals.js';
 import { providers } from './services/index.js';
 import { configureTransport } from './services/transport.js';
 import { glyphPath, glyphSVG } from './icons.js';
+import { applyDocumentTranslations, getLanguage, getLocale, setLanguage, t } from './i18n.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const latlng = coords => [coords[1], coords[0]];
-const sortLines = (a, b) => a.localeCompare(b, 'es', { numeric: true });
+const sortLines = (a, b) => a.localeCompare(b, getLocale(), { numeric: true });
 const normalize = value => value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+applyDocumentTranslations();
+$('#language').value = getLanguage();
 const state = {
   stops: [], lines: new Map(), models: new Map(), loading: new Map(), routeLayers: new Map(),
   stopLayers: new Map(), buses: new Map(), approaches: new Map(), selected: null, arrivals: [],
@@ -64,6 +67,7 @@ const selectionGroup = L.layerGroup().addTo(map);
 const busGroup = L.layerGroup().addTo(map);
 const contextGroup = L.layerGroup().addTo(map);
 let locationMarker = null, latestLocation = null, toastTimeout;
+let latestConnection = { label: 'Conectando', status: 'loading', values: {} };
 
 map.on('click', event => {
   if (event.layer || !(event.originalEvent?.target instanceof HTMLCanvasElement)) return;
@@ -83,14 +87,15 @@ map.on('click', event => {
   marker?.fire('click');
 });
 
-function toast(message) {
-  $('#toast').textContent = message; $('#toast').hidden = false;
+function toast(message, values = {}) {
+  $('#toast').textContent = t(message, values); $('#toast').hidden = false;
   clearTimeout(toastTimeout); toastTimeout = setTimeout(() => { $('#toast').hidden = true; }, 6500);
 }
 
-function connection(label, status = 'ok') {
+function connection(label, status = 'ok', values = {}) {
+  latestConnection = { label, status, values };
   $('#connection').dataset.state = status;
-  $('#connection span').textContent = label;
+  $('#connection span').textContent = t(label, values);
 }
 
 const routePalette = ['#176a9b', '#c94d53', '#16816c', '#c66a28', '#665aab', '#287e9a', '#a54872', '#967319'];
@@ -106,8 +111,8 @@ function contrastColor(value) {
 }
 function chip(line) {
   const inactive = state.lineServiceStatus.get(line) === false;
-  const label = `${state.lines.get(line)?.name || `Línea ${line}`}${inactive ? ', sin servicio hoy' : ''}`;
-  return `<button class="line-chip${inactive ? ' is-inactive' : ''}" data-line="${escape(line)}" style="--route-color:${color(line)};--route-ink:${contrastColor(color(line))}" aria-pressed="${state.activeLine === line}" aria-label="${escape(label)}" title="${escape(label)}">${escape(line)}${inactive ? '<span class="line-chip-status">Sin servicio hoy</span>' : ''}</button>`;
+  const label = `${state.lines.get(line)?.name || t('Línea {line}', { line })}${inactive ? `, ${t('Sin servicio hoy').toLowerCase()}` : ''}`;
+  return `<button class="line-chip${inactive ? ' is-inactive' : ''}" data-line="${escape(line)}" style="--route-color:${color(line)};--route-ink:${contrastColor(color(line))}" aria-pressed="${state.activeLine === line}" aria-label="${escape(label)}" title="${escape(label)}">${escape(line)}${inactive ? `<span class="line-chip-status">${t('Sin servicio hoy')}</span>` : ''}</button>`;
 }
 
 function servingLines(stop) {
@@ -129,13 +134,13 @@ async function loadLine(line) {
       else if (models.some(model => model.serviceToday === true)) state.lineServiceStatus.set(line, true);
       else state.lineServiceStatus.delete(line);
       if (state.selected) renderStop();
-      if (!models.some(m => m.paths.length)) throw new Error(`Recorrido de la línea ${line} no disponible.`);
+      if (!models.some(m => m.paths.length)) throw new Error(t('Recorrido de la línea {line} no disponible.', { line }));
       state.models.set(line, models); item.loadedAt = Date.now(); state.routeFailures.delete(line);
       if (state.routeLayers.has(line)) map.removeLayer(state.routeLayers.get(line));
       const layer = L.geoJSON({ type: 'FeatureCollection', features: models.flatMap(m => m.features) }, {
         pane: 'routes', renderer: routeRenderer, className: 'route-path', style: { color: item.color, weight: 3, opacity: .45, lineCap: 'round', lineJoin: 'round' },
         onEachFeature: (_feature, part) => {
-          part.bindTooltip(`Línea ${escape(line)} · ${escape(item.name)}`, { sticky: true });
+          part.bindTooltip(`${t('Línea {line}', { line: escape(line) })} · ${escape(item.name)}`, { sticky: true });
           part.on('click', event => { L.DomEvent.stopPropagation(event); selectLine(line); });
         },
       });
@@ -228,28 +233,28 @@ const STAR = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.8 5
 let renderedBikesKey = '';
 function bikeRating(bike) {
   // A bike without any user rating is unrated, not badly rated.
-  if (bike.rating == null || bike.ratingCount === 0) return { level: null, tone: 'none', label: 'Sin valoraciones' };
+  if (bike.rating == null || bike.ratingCount === 0) return { level: null, tone: 'none', label: t('Sin valoraciones') };
   const maximum = Math.max(1, bike.ratingMax || 3), level = Math.max(0, Math.min(3, Math.round((bike.rating / maximum) * 3)));
-  return { level, tone: level === 3 ? 'good' : level === 2 ? 'fair' : 'poor', label: `${level} de 3 estrellas` };
+  return { level, tone: level === 3 ? 'good' : level === 2 ? 'fair' : 'poor', label: t('{level} de 3 estrellas', { level }) };
 }
 function bikeRow(bike, index) {
   const rating = bikeRating(bike);
   const stars = [1, 2, 3].map(n => `<i class="${rating.level != null && n <= rating.level ? 'on' : ''}">${STAR}</i>`).join('');
-  const count = bike.ratingCount == null ? '' : bike.ratingCount === 0 ? 'Sin votos' : `${bike.ratingCount} ${bike.ratingCount === 1 ? 'voto' : 'votos'}`;
-  const date = bike.lastRevisionAt ? new Date(bike.lastRevisionAt).toLocaleDateString('es', { day: 'numeric', month: 'short' }) : null;
-  const review = bike.reviewed === true ? 'Revisada' : 'Pendiente de revisión';
+  const count = bike.ratingCount == null ? '' : bike.ratingCount === 0 ? t('Sin votos') : `${bike.ratingCount} ${t(bike.ratingCount === 1 ? 'voto' : 'votos')}`;
+  const date = bike.lastRevisionAt ? new Date(bike.lastRevisionAt).toLocaleDateString(getLocale(), { day: 'numeric', month: 'short' }) : null;
+  const review = bike.reviewed === true ? t('Revisada') : t('Pendiente de revisión');
   return `<li class="bike-row tone-${rating.tone}" style="--i:${index}">
     <span class="bike-row-icon" aria-hidden="true">${glyphSVG('bike')}</span>
-    <span class="bike-row-main"><strong>Bici ${escape(bike.id)}</strong><small>${bike.standNumber == null ? 'Anclaje –' : `Anclaje ${escape(bike.standNumber)}`}</small></span>
+    <span class="bike-row-main"><strong>${t('Bici {id}', { id: escape(bike.id) })}</strong><small>${bike.standNumber == null ? t('Anclaje –') : t('Anclaje {number}', { number: escape(bike.standNumber) })}</small></span>
     <span class="bike-row-rating" role="img" aria-label="${escape(rating.label)}"><span class="bike-stars">${stars}</span><small>${count}</small></span>
-    <span class="bike-review ${bike.reviewed === true ? 'is-reviewed' : ''}" title="${review}${date ? ` · última revisión ${date}` : ''}">${bike.reviewed === true ? 'Revisada' : 'Revisar'}${date ? `<small>${date}</small>` : ''}</span>
+    <span class="bike-review ${bike.reviewed === true ? 'is-reviewed' : ''}" title="${escape(`${review}${date ? t(' · última revisión {date}', { date }) : ''}`)}">${bike.reviewed === true ? t('Revisada') : t('Revisar')}${date ? `<small>${date}</small>` : ''}</span>
   </li>`;
 }
 
 function stopLabel(stop, provider, lines, context) {
   if (provider.kind === 'bike') {
     const bikes = finite(stop.availableBikes), docks = finite(stop.availableDocks);
-    return `<span class="bike-count" style="--level:${availabilityLevel(bikes)}" title="Bicicletas disponibles">${bikes ?? '–'}</span><span class="bike-docks" title="Anclajes libres">${docks ?? '–'}</span>`;
+    return `<span class="bike-count" style="--level:${availabilityLevel(bikes)}" title="${t('Bicicletas disponibles')}">${bikes ?? '–'}</span><span class="bike-docks" title="${t('Anclajes libres')}">${docks ?? '–'}</span>`;
   }
   const operator = `<span class="stop-label-operator" style="--operator-color:${provider.color};--operator-ink:${provider.ink || '#fff'}" aria-hidden="true">${glyphSVG(provider.glyph)}</span>`;
   const badges = lines.map(line => {
@@ -261,7 +266,7 @@ function stopLabel(stop, provider, lines, context) {
 }
 
 async function loadAllRoutes() {
-  if (!state.provider.preloadRoutes) { $('#route-progress').textContent = 'Recorridos bajo demanda: elige una línea o una parada.'; state.routeRefresh = Date.now(); return; }
+  if (!state.provider.preloadRoutes) { $('#route-progress').textContent = t('Recorridos bajo demanda: elige una línea o una parada.'); state.routeRefresh = Date.now(); return; }
   const epoch = state.epoch;
   const pending = [...state.lines.keys()];
   let done = 0;
@@ -271,7 +276,7 @@ async function loadAllRoutes() {
       await loadLine(line).catch(() => {});
       if (epoch !== state.epoch) return;
       done++;
-      $('#route-progress').textContent = `Recorridos: ${done}/${state.lines.size}${state.routeFailures.size ? ` · No disponibles: ${[...state.routeFailures].sort(sortLines).join(', ')}` : ''}`;
+      $('#route-progress').textContent = `${t('Recorridos: {done}/{total}', { done, total: state.lines.size })}${state.routeFailures.size ? t(' · No disponibles: {lines}', { lines: [...state.routeFailures].sort(sortLines).join(', ') }) : ''}`;
       if (state.selected && done % 5 === 0) renderStop();
     }
   }));
@@ -327,7 +332,7 @@ async function showContextStops() {
         stopMarker(stop, provider).on('click', () => switchProvider(provider.id, stop.id)).addTo(contextGroup);
       }
       updateStopNumberLabels();
-    } catch { if (generation === state.contextEpoch) toast(`No se pueden cargar las paradas de ${provider.name}.`); }
+    } catch { if (generation === state.contextEpoch) toast('No se pueden cargar las paradas de {name}.', { name: provider.name }); }
   }));
 }
 
@@ -369,13 +374,13 @@ function clearSelection() {
   state.sheetExpanded = false; state.approaches.clear(); clearBuses(); selectionGroup.clearLayers();
   $('#workspace').classList.remove('is-stop-expanded', 'has-stop');
   const url = new URL(location.href); url.searchParams.delete('stop'); history.replaceState(null, '', url);
-  connection(`${state.provider.name} · red conectada`);
+  connection('{name} · red conectada', 'ok', { name: state.provider.name });
   renderIdle(); renderLineList(); updateLayers();
 }
 
 function renderIdle() {
   const provider = state.provider;
-  $('#stop-panel').innerHTML = `<div class="idle"><span class="idle-icon" style="${providerStyle(provider)}" aria-hidden="true">${glyphSVG(provider.glyph)}</span><div><strong>${provider.kind === 'bike' ? 'Elige una estación' : 'Elige una parada'}</strong><p>Tócala en el mapa o búscala por nombre o número.</p></div></div>`;
+  $('#stop-panel').innerHTML = `<div class="idle"><span class="idle-icon" style="${providerStyle(provider)}" aria-hidden="true">${glyphSVG(provider.glyph)}</span><div><strong>${t(provider.kind === 'bike' ? 'Elige una estación' : 'Elige una parada')}</strong><p>${t('Tócala en el mapa o búscala por nombre o número.')}</p></div></div>`;
 }
 
 function schedulePoll() {
@@ -397,7 +402,7 @@ async function refreshArrivals() {
     syncBuses(); updateLayers();
     // Geometry cannot delay the realtime polling clock or hide already-published GPS.
     loadStopRoutes(provider, stop, generation, incoming, state.controller.signal);
-    connection(`En directo · ${provider.name}${state.source === 'proxy' ? ' · proxy' : ''}`);
+    connection('En directo · {name}{proxy}', 'ok', { name: provider.name, proxy: state.source === 'proxy' ? ' · proxy' : '' });
   } catch (error) {
     if (generation !== state.generation || state.controller.signal.aborted) return;
     state.lastError = error.message; connection('Sin actualización', 'error');
@@ -414,7 +419,7 @@ async function loadStopRoutes(provider, stop, generation, incoming, signal) {
       stop.lines = lines;
     } catch (error) {
       if (generation !== state.generation || signal.aborted) return;
-      state.lastError = `Llegadas disponibles; no se han podido consultar todas las líneas: ${error.message}`;
+      state.lastError = t('Llegadas disponibles; no se han podido consultar todas las líneas: {error}', { error: error.message });
     }
   }
   if (generation !== state.generation) return;
@@ -474,9 +479,9 @@ function arrivalPosition(arrival, now = Date.now(), approach = arrivalApproach(a
 }
 
 function positionNote(arrival) {
-  if (arrival.position?.kind === 'gps') return `GPS · ${new Date(arrival.position.timestamp).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
-  if (arrival.position?.kind === 'reported') return 'Posición publicada · hora GPS no indicada';
-  return `Estimación · ≈ ${(Math.max(0, arrival.arrivalAt - Date.now()) / 1000 * state.speed / 3600).toFixed(1)} km`;
+  if (arrival.position?.kind === 'gps') return t('GPS · {time}', { time: new Date(arrival.position.timestamp).toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }) });
+  if (arrival.position?.kind === 'reported') return t('Posición publicada · hora GPS no indicada');
+  return t('Estimación · ≈ {distance} km', { distance: (Math.max(0, arrival.arrivalAt - Date.now()) / 1000 * state.speed / 3600).toFixed(1) });
 }
 
 function busIcon(line) {
@@ -506,11 +511,11 @@ function syncBuses() {
       old.fromArrivalAt = old.fromArrivalAt + (old.arrival.arrivalAt - old.fromArrivalAt) * fraction;
       old.arrival = arrival; old.changedAt = now; old.approach = approach;
     } else {
-      const marker = L.marker(latlng(position), { pane: 'vehicles', icon: busIcon(arrival.line), title: `${state.provider.name}, ${arrival.position ? 'posición publicada' : 'posición estimada'}, línea ${arrival.line}, ${arrival.destination}`, riseOnHover: true });
+      const marker = L.marker(latlng(position), { pane: 'vehicles', icon: busIcon(arrival.line), title: `${state.provider.name}, ${t(arrival.position ? 'Posición publicada' : 'Posición estimada')}, ${t('Línea {line}', { line: arrival.line })}, ${arrival.destination}`, riseOnHover: true });
       state.buses.set(arrival.id, { marker, arrival, approach, currentPosition: position, fromArrivalAt: arrival.arrivalAt, changedAt: now });
     }
     const bus = state.buses.get(arrival.id);
-    bus.marker.bindPopup(`<strong>${escape(state.provider.name)} · ${escape(arrival.line)} → ${escape(arrival.destination)}</strong><br>Hacia ${escape(state.selected.name)}<br>${escape(positionNote(arrival))}<br><small>Previsión: ${escape(arrival.raw)}${arrival.vehicleId ? ` · Vehículo ${escape(arrival.vehicleId)}` : ''}${arrival.platform ? ` · Andén ${escape(arrival.platform)}` : ''}</small>`);
+    bus.marker.bindPopup(`<strong>${escape(state.provider.name)} · ${escape(arrival.line)} → ${escape(arrival.destination)}</strong><br>${escape(t('Hacia {stop}', { stop: state.selected.name }))}<br>${escape(positionNote(arrival))}<br><small>${escape(t('Previsión'))}: ${escape(arrival.raw)}${arrival.vehicleId ? ` · ${escape(t('Vehículo'))} ${escape(arrival.vehicleId)}` : ''}${arrival.platform ? ` · ${escape(t('Andén {platform}', { platform: arrival.platform }))}` : ''}</small>`);
     if (bus.marker.getElement()) bus.marker.getElement().dataset.positionKind = arrival.position?.kind || 'estimated';
   }
   drawBuses(Date.now());
@@ -550,55 +555,75 @@ function animate(now) {
 requestAnimationFrame(animate);
 
 function reason(arrival) {
-  if (arrival.programmed) return 'Horario programado · sin posición';
-  if (Date.now() - arrival.observedAt > 90000) return 'Datos antiguos · sin posición';
-  if (arrival.arrivalAt != null && Date.now() > arrival.arrivalAt + 15000) return 'Pendiente de nueva previsión';
+  if (arrival.programmed) return t('Horario programado · sin posición');
+  if (Date.now() - arrival.observedAt > 90000) return t('Datos antiguos · sin posición');
+  if (arrival.arrivalAt != null && Date.now() > arrival.arrivalAt + 15000) return t('Pendiente de nueva previsión');
   if (arrival.positionNote) return arrival.positionNote;
-  if (arrival.position) return 'Posición publicada antigua · sin marcador';
-  if (!state.models.has(arrival.line)) return state.routeFailures.has(arrival.line) ? 'Recorrido no disponible' : 'Cargando recorrido…';
-  if (!arrivalApproach(arrival)) return 'Sentido no resuelto · sin posición';
-  return 'Fuera del tramo estimable';
+  if (arrival.position) return t('Posición publicada antigua · sin marcador');
+  if (!state.models.has(arrival.line)) return state.routeFailures.has(arrival.line) ? t('Recorrido no disponible') : t('Cargando recorrido…');
+  if (!arrivalApproach(arrival)) return t('Sentido no resuelto · sin posición');
+  return t('Fuera del tramo estimable');
 }
 
 function etaLabel(arrival) {
-  if (arrival.arrivalAt == null) return '<small>Sin ETA</small>';
+  if (arrival.arrivalAt == null) return `<small>${t('Sin ETA')}</small>`;
   if (arrival.programmed) return escape(arrival.raw);
   const now = Date.now(), arrivalAt = adjustedArrivalAt(arrival, arrivalApproach(arrival), now, state.speed);
   if (now - arrival.observedAt > 90000 || now > arrival.arrivalAt + 15000) return '—';
   const minutes = Math.max(0, Math.ceil((arrivalAt - now) / 60000));
   const locationAdjusted = arrivalAt < arrival.arrivalAt;
-  return minutes <= 0 ? `Ya${locationAdjusted ? '<small>GPS</small>' : ''}` : `${minutes}<small>min${locationAdjusted ? ' · GPS' : ''}</small>`;
+  if (minutes <= 0) return locationAdjusted ? t('Ya<small>GPS</small>') : t('Ya');
+  return locationAdjusted ? t('{minutes}<small>min · GPS</small>', { minutes }) : t('{minutes}<small>min</small>', { minutes });
+}
+
+function networkCount() {
+  const stopCount = state.stops.length.toLocaleString(getLocale());
+  $('#network-count').textContent = state.provider.kind === 'bike'
+    ? t('{count} estaciones', { count: stopCount })
+    : t('{stops} paradas · {lines} líneas', { stops: stopCount, lines: state.lines.size.toLocaleString(getLocale()) });
+}
+
+function providerDescription(provider) {
+  const descriptions = {
+    emt: 'Previsiones SAE en directo con posiciones estimadas según el tiempo de llegada.',
+    atmv: 'Previsiones de Met Go y coordenadas del vehículo cuando están publicadas. La fuente no indica la hora de esas coordenadas; en caso contrario, se estima la posición.',
+    metro: 'Próximas llegadas del panel de estación de Metrovalencia. Las posiciones son estimadas, no GPS; el destino permite determinar el sentido cuando la geometría lo permite.',
+    cercanias: 'GPS de Renfe con hora de medición. Solo se muestran trenes cuyo recorrido pasa por la estación seleccionada; la previsión aparece únicamente cuando Renfe la publica.',
+    valenbisi: 'Disponibilidad de bicicletas y anclajes libres en las estaciones.',
+  };
+  return t(descriptions[provider.id] || provider.description);
 }
 
 function renderStop() {
   if (!state.selected) return;
   const stop = state.selected, lines = servingLines(stop);
   const bike = state.provider.kind === 'bike';
-  const toggleLabel = state.sheetExpanded ? 'Ocultar' : bike ? 'Disponibilidad' : 'Llegadas';
-  const heading = `<div class="stop-heading"><span class="stop-symbol" style="${providerStyle(state.provider)}" aria-hidden="true">${glyphSVG(state.provider.glyph)}</span><div class="stop-heading-copy"><span class="stop-code">${bike ? 'Estación' : `Parada ${escape(stop.id)}`} · ${escape(state.provider.name)}</span><h2 id="stop-name">${escape(stop.name)}</h2></div><div class="stop-actions"><button id="stop-panel-toggle" class="sheet-toggle" aria-expanded="${state.sheetExpanded}" aria-controls="arrival-content"><span>${toggleLabel}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button><button id="stop-close" class="sheet-toggle" aria-label="Cerrar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button></div></div>`;
-  const updateInfo = `<div class="update-info"><span id="updated-age">${state.observedAt ? 'Actualizado ahora' : 'Esperando datos'}</span><span>Cada ${state.provider.interval / 1000} s</span></div>`;
-  const refresh = `<button id="refresh" class="text-button" ${state.busy ? 'disabled' : ''} aria-label="Actualizar">Actualizar</button>`;
+  const toggleLabel = t(state.sheetExpanded ? 'Ocultar' : bike ? 'Disponibilidad' : 'Llegadas');
+  const stopCode = bike ? t('Estación · {provider}', { provider: state.provider.name }) : t('Parada {id} · {provider}', { id: escape(stop.id), provider: state.provider.name });
+  const heading = `<div class="stop-heading"><span class="stop-symbol" style="${providerStyle(state.provider)}" aria-hidden="true">${glyphSVG(state.provider.glyph)}</span><div class="stop-heading-copy"><span class="stop-code">${stopCode}</span><h2 id="stop-name">${escape(stop.name)}</h2></div><div class="stop-actions"><button id="stop-panel-toggle" class="sheet-toggle" aria-expanded="${state.sheetExpanded}" aria-controls="arrival-content"><span>${toggleLabel}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button><button id="stop-close" class="sheet-toggle" aria-label="${t('Cerrar')}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"/></svg></button></div></div>`;
+  const updateInfo = `<div class="update-info"><span id="updated-age">${t(state.observedAt ? 'Actualizado ahora' : 'Esperando datos')}</span><span>${t('Cada {seconds} s', { seconds: state.provider.interval / 1000 })}</span></div>`;
+  const refresh = `<button id="refresh" class="text-button" ${state.busy ? 'disabled' : ''} aria-label="${t('Actualizar')}">${t('Actualizar')}</button>`;
   if (bike) {
     const available = finite(stop.availableBikes), docks = finite(stop.availableDocks), capacity = finite(stop.capacity);
     const bikes = (Array.isArray(stop.bikes) ? stop.bikes : []).slice().sort((a, b) => (a.standNumber ?? 999) - (b.standNumber ?? 999));
-    const status = stop.status && stop.status !== 'open' ? `Estado: ${escape(stop.status)}` : 'Estación operativa';
-    const updated = stop.lastUpdated ? new Date(stop.lastUpdated).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : null;
+    const status = stop.status && stop.status !== 'open' ? t('Estado: {status}', { status: escape(stop.status) }) : t('Estación operativa');
+    const updated = stop.lastUpdated ? new Date(stop.lastUpdated).toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' }) : null;
     const bikesKey = `${stop.id}:${bikes.map(bike => `${bike.id}@${bike.standNumber}`).join(',')}`;
     const entering = bikes.length && bikesKey !== renderedBikesKey;
     if (bikes.length) renderedBikesKey = bikesKey;
     const tones = bikes.reduce((total, bike) => { total[bikeRating(bike).tone]++; return total; }, { good: 0, fair: 0, poor: 0, none: 0 });
-    const toneSummary = bikes.length ? `<span class="bike-tones">${[['good', 'buenas'], ['fair', 'regulares'], ['poor', 'malas']].filter(([tone]) => tones[tone]).map(([tone, label]) => `<span class="tone-${tone}" title="${tones[tone]} ${label}"><i></i>${tones[tone]}</span>`).join('')}</span>` : '';
+    const toneSummary = bikes.length ? `<span class="bike-tones">${[['good', 'buenas'], ['fair', 'regulares'], ['poor', 'malas']].filter(([tone]) => tones[tone]).map(([tone, label]) => `<span class="tone-${tone}" title="${tones[tone]} ${t(label)}"><i></i>${tones[tone]}</span>`).join('')}</span>` : '';
     const bikeList = bikes.length
       ? `<ul class="bike-list${entering ? ' is-entering' : ''}">${bikes.map(bikeRow).join('')}</ul>`
       : stop.bikes === undefined && state.busy
-        ? `<ul class="bike-list is-loading" aria-label="Cargando bicicletas">${'<li class="bike-row skeleton"></li>'.repeat(Math.min(3, available || 2))}</ul>`
-        : `<p class="bike-empty">${stop.bikesError ? 'No se pudo actualizar la información de bicicletas.' : available === 0 ? 'No hay bicicletas ancladas ahora.' : 'Valoraciones no disponibles en este momento.'}</p>`;
+        ? `<ul class="bike-list is-loading" aria-label="${t('Cargando bicicletas')}">${'<li class="bike-row skeleton"></li>'.repeat(Math.min(3, available || 2))}</ul>`
+        : `<p class="bike-empty">${t(stop.bikesError ? 'No se pudo actualizar la información de bicicletas.' : available === 0 ? 'No hay bicicletas ancladas ahora.' : 'Valoraciones no disponibles en este momento.')}</p>`;
     const bikeFreshness = bikes.length && (stop.bikesStale || stop.bikesError)
-      ? '<p class="bike-freshness" role="status">Mostrando la última información disponible; no se pudo actualizar.</p>' : '';
+      ? `<p class="bike-freshness" role="status">${t('Mostrando la última información disponible; no se pudo actualizar.')}</p>` : '';
     $('#stop-panel').innerHTML = `${heading}
-      <button class="sheet-summary" data-expand><span class="bike-count" style="--level:${availabilityLevel(available)}">${available ?? '–'}</span><span class="sheet-summary-copy">bicis disponibles<small>${docks ?? '–'} anclajes libres</small></span></button>
-      <div id="arrival-content" class="arrival-content"><div class="bike-status"><div class="is-bikes" style="--level:${availabilityLevel(available)}"><strong>${available ?? '–'}</strong><span>bicis disponibles</span></div><div><strong>${docks ?? '–'}</strong><span>parking libre${capacity == null ? '' : ` de ${capacity}`}</span></div></div><div class="section-heading"><h3>Estado de las bicis</h3>${toneSummary}</div>${bikeFreshness}${bikeList}
-      <div class="section-heading"><h3>Estado</h3>${refresh}</div><p class="muted">${status}${updated ? ` · Dato de la fuente: ${updated}` : ''}</p>${state.lastError ? `<div class="notice error" role="alert">${escape(state.lastError)}</div>` : ''}${updateInfo}</div>`;
+      <button class="sheet-summary" data-expand><span class="bike-count" style="--level:${availabilityLevel(available)}">${available ?? '–'}</span><span class="sheet-summary-copy">${t('bicis disponibles')}<small>${docks ?? '–'} ${t('anclajes libres')}</small></span></button>
+      <div id="arrival-content" class="arrival-content"><div class="bike-status"><div class="is-bikes" style="--level:${availabilityLevel(available)}"><strong>${available ?? '–'}</strong><span>${t('bicis disponibles')}</span></div><div><strong>${docks ?? '–'}</strong><span>${t('parking libre')}${capacity == null ? '' : ` ${t('de')} ${capacity}`}</span></div></div><div class="section-heading"><h3>${t('Estado de las bicis')}</h3>${toneSummary}</div>${bikeFreshness}${bikeList}
+      <div class="section-heading"><h3>${t('Estado')}</h3>${refresh}</div><p class="muted">${status}${updated ? ` · ${t('Dato de la fuente: {time}', { time: updated })}` : ''}</p>${state.lastError ? `<div class="notice error" role="alert">${escape(state.lastError)}</div>` : ''}${updateInfo}</div>`;
     $('#workspace').classList.toggle('is-stop-expanded', state.sheetExpanded);
     return;
   }
@@ -606,19 +631,19 @@ function renderStop() {
   const next = arrivals[0];
   const routeStyle = line => `--route-color:${color(line)};--route-ink:${contrastColor(color(line))}`;
   const summary = next
-    ? `<button class="sheet-summary" data-expand style="${routeStyle(next.line)}"><span class="route-badge">${escape(next.line)}</span><span class="sheet-summary-copy">${escape(next.destination)}<small>Próxima llegada</small></span><span class="eta" data-eta-for="${escape(next.id)}">${etaLabel(next)}</span></button>`
-    : `<div class="sheet-summary is-empty">${state.busy ? 'Consultando llegadas…' : state.lastError ? 'No se han podido consultar las llegadas' : 'Sin llegadas previstas ahora'}</div>`;
+    ? `<button class="sheet-summary" data-expand style="${routeStyle(next.line)}"><span class="route-badge">${escape(next.line)}</span><span class="sheet-summary-copy">${escape(next.destination)}<small>${t('Próxima llegada')}</small></span><span class="eta" data-eta-for="${escape(next.id)}">${etaLabel(next)}</span></button>`
+    : `<div class="sheet-summary is-empty">${t(state.busy ? 'Consultando llegadas…' : state.lastError ? 'No se han podido consultar las llegadas' : 'Sin llegadas previstas ahora')}</div>`;
   const inactiveLines = lines.filter(line => state.lineServiceStatus.get(line) === false);
-  const inactiveSummary = inactiveLines.length ? `<p class="inactive-lines-summary" role="status">Sin servicio hoy: ${inactiveLines.map(escape).join(', ')}</p>` : '';
-  const stopLines = lines.length ? `<div class="stop-lines" role="group" aria-label="Líneas que pasan por esta parada">${lines.map(chip).join('')}</div>` : '';
+  const inactiveSummary = inactiveLines.length ? `<p class="inactive-lines-summary" role="status">${t('Sin servicio hoy: {lines}', { lines: inactiveLines.map(escape).join(', ') })}</p>` : '';
+  const stopLines = lines.length ? `<div class="stop-lines" role="group" aria-label="${t('Líneas que pasan por esta parada')}">${lines.map(chip).join('')}</div>` : '';
   $('#stop-panel').innerHTML = `${heading}${stopLines}${summary}${inactiveSummary}
     <div id="arrival-content" class="arrival-content">
-    <div class="section-heading"><h3>Próximas llegadas${state.activeLine ? ` · ${escape(state.activeLine)}` : ''}</h3>${refresh}</div>
-    ${state.lastError ? `<div class="notice error" role="alert">${escape(state.lastError)}${state.observedAt ? '<br>Se muestra la última consulta; las posiciones caducan a los 90 s.' : ''}</div>` : ''}
+    <div class="section-heading"><h3>${t('Próximas llegadas')}${state.activeLine ? ` · ${escape(state.activeLine)}` : ''}</h3>${refresh}</div>
+    ${state.lastError ? `<div class="notice error" role="alert">${escape(state.lastError)}${state.observedAt ? `<br>${t('Se muestra la última consulta; las posiciones caducan a los 90 s.')}` : ''}</div>` : ''}
     <div class="arrival-list">${arrivals.map(arrival => {
       const position = arrivalPosition(arrival);
-      return `<article class="arrival-card" style="${routeStyle(arrival.line)}" data-arrival="${escape(arrival.id)}"><div class="arrival-main"><span class="route-badge">${escape(arrival.line)}</span><div class="arrival-destination">${escape(arrival.destination)}${arrival.occupancy ? `<small>Ocupación: ${escape(arrival.occupancy)}</small>` : arrival.platform ? `<small>Andén ${escape(arrival.platform)}</small>` : ''}</div><span class="eta">${etaLabel(arrival)}</span></div><div class="arrival-meta"><span data-position-note>${position ? positionNote(arrival) : reason(arrival)}</span><button data-bus="${escape(arrival.id)}" ${position ? '' : 'hidden'}>Ver en mapa</button></div></article>`;
-    }).join('') || (!state.lastError ? `<div class="empty-state"><p>${state.busy ? 'Consultando las próximas llegadas…' : state.activeLine ? 'Sin previsiones para esta línea.' : 'La fuente no publica llegadas para esta parada ahora mismo.'}</p></div>` : '')}</div>
+      return `<article class="arrival-card" style="${routeStyle(arrival.line)}" data-arrival="${escape(arrival.id)}"><div class="arrival-main"><span class="route-badge">${escape(arrival.line)}</span><div class="arrival-destination">${escape(arrival.destination)}${arrival.occupancy ? `<small>${t('Ocupación: {occupancy}', { occupancy: escape(arrival.occupancy) })}</small>` : arrival.platform ? `<small>${t('Andén {platform}', { platform: escape(arrival.platform) })}</small>` : ''}</div><span class="eta">${etaLabel(arrival)}</span></div><div class="arrival-meta"><span data-position-note>${position ? positionNote(arrival) : reason(arrival)}</span><button data-bus="${escape(arrival.id)}" ${position ? '' : 'hidden'}>${t('Ver en mapa')}</button></div></article>`;
+    }).join('') || (!state.lastError ? `<div class="empty-state"><p>${t(state.busy ? 'Consultando las próximas llegadas…' : state.activeLine ? 'Sin previsiones para esta línea.' : 'La fuente no publica llegadas para esta parada ahora mismo.')}</p></div>` : '')}</div>
     ${updateInfo}</div>`;
   $('#workspace').classList.toggle('is-stop-expanded', state.sheetExpanded);
 }
@@ -628,7 +653,7 @@ function setStopPanelExpanded(expanded) {
   $('#workspace').classList.toggle('is-stop-expanded', expanded);
   $('#stop-panel-toggle')?.setAttribute('aria-expanded', String(expanded));
   const label = $('#stop-panel-toggle > span');
-  if (label) label.textContent = expanded ? 'Ocultar' : state.provider.kind === 'bike' ? 'Disponibilidad' : 'Llegadas';
+  if (label) label.textContent = t(expanded ? 'Ocultar' : state.provider.kind === 'bike' ? 'Disponibilidad' : 'Llegadas');
 }
 
 function renderLineList() { $('#line-list').innerHTML = [...state.lines.keys()].sort(sortLines).map(chip).join(''); }
@@ -661,8 +686,8 @@ function searchStops() {
   const results = $('#search-results');
   if (!query) { results.hidden = true; return; }
   const matches = state.stops.filter(stop => stop.id.includes(query) || normalize(stop.name).includes(query))
-    .sort((a, b) => (b.id === query) - (a.id === query) || a.name.localeCompare(b.name)).slice(0, 12);
-  results.innerHTML = matches.map(stop => `<button class="search-result" data-stop="${escape(stop.id)}" style="${providerStyle(state.provider)}"><strong>${state.provider.kind === 'bike' ? glyphSVG('bike') : escape(stop.id)}</strong><span>${escape(stop.name)}</span></button>`).join('') || '<p>No encontramos esa parada.</p>';
+    .sort((a, b) => (b.id === query) - (a.id === query) || a.name.localeCompare(b.name, getLocale())).slice(0, 12);
+  results.innerHTML = matches.map(stop => `<button class="search-result" data-stop="${escape(stop.id)}" style="${providerStyle(state.provider)}"><strong>${state.provider.kind === 'bike' ? glyphSVG('bike') : escape(stop.id)}</strong><span>${escape(stop.name)}</span></button>`).join('') || `<p>${t('No encontramos esa parada.')}</p>`;
   results.hidden = false;
 }
 
@@ -696,7 +721,7 @@ $('#fit').addEventListener('click', fitBuses);
 function updateLocation(position) {
   latestLocation = [position.coords.longitude, position.coords.latitude];
   const point = latlng(latestLocation);
-  if (!locationMarker) locationMarker = L.circleMarker(point, { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip('Tu ubicación');
+  if (!locationMarker) locationMarker = L.circleMarker(point, { radius: 8, weight: 3, color: '#fff', fillColor: '#1f6fe5', fillOpacity: 1 }).addTo(map).bindTooltip(t('Tu ubicación'));
   else locationMarker.setLatLng(point);
 }
 if (navigator.geolocation?.watchPosition) navigator.geolocation.watchPosition(updateLocation, () => {}, { enableHighAccuracy: true, maximumAge: 15000, timeout: 15000 });
@@ -723,6 +748,18 @@ $('#lines-toggle').addEventListener('click', () => toggleLines($('#line-panel').
 $('#lines-close').addEventListener('click', () => toggleLines(false));
 $('#settings-open').addEventListener('click', () => $('#settings').showModal());
 $('#settings').addEventListener('click', event => { if (event.target === $('#settings')) { const r = event.target.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) event.target.close(); } });
+$('#language').addEventListener('change', event => {
+  setLanguage(event.target.value);
+  applyDocumentTranslations();
+  renderLineList();
+  if (state.selected) renderStop(); else renderIdle();
+  if ($('#search').value.trim()) searchStops();
+  if (state.stops.length) networkCount();
+  else $('#network-count').textContent = t('Cargando red…');
+  $('#provider-description').textContent = providerDescription(state.provider);
+  $('#provider-source').textContent = t('Fuente: {name} ↗', { name: state.provider.name });
+  connection(latestConnection.label, latestConnection.status, latestConnection.values);
+});
 $('#speed').addEventListener('input', event => {
   state.speed = Number(event.target.value); $('#speed-value').value = state.speed;
   syncBuses(); renderStop(); saveSettings();
@@ -806,7 +843,7 @@ setInterval(() => {
   if (!state.selected || document.hidden) return;
   if (state.observedAt) {
     const age = Math.floor((Date.now() - state.observedAt) / 1000);
-    if ($('#updated-age')) $('#updated-age').textContent = age > 90 ? `Datos antiguos · hace ${age} s` : `Actualizado hace ${age} s`;
+    if ($('#updated-age')) $('#updated-age').textContent = age > 90 ? t('Datos antiguos · hace {seconds} s', { seconds: age }) : t('Actualizado hace {seconds} s', { seconds: age });
     if (age > 90) connection('Datos antiguos', 'error');
   }
   for (const arrival of state.arrivals) {
@@ -834,24 +871,22 @@ async function initialize() {
       ...item, color: item.color || routePalette[index % routePalette.length], loadedAt: 0,
     }));
     showStops(); renderLineList();
-    $('#network-count').textContent = state.provider.kind === 'bike'
-      ? `${state.stops.length.toLocaleString('es')} estaciones`
-      : `${state.stops.length.toLocaleString('es')} paradas · ${state.lines.size} líneas`;
-    connection(`${provider.name} · red conectada`);
+    networkCount();
+    connection('{name} · red conectada', 'ok', { name: provider.name });
     const requested = new URLSearchParams(location.search).get('stop');
     if (requested) {
       const stop = state.stops.find(s => s.id === requested);
-      if (stop) selectStop(stop); else toast(`La parada ${requested} no está en la red publicada.`);
+      if (stop) selectStop(stop); else toast('La parada {id} no está en la red publicada.', { id: requested });
     }
     loadAllRoutes();
     showContextStops();
   } catch (error) {
     if (epoch !== state.epoch) return;
-    connection(`Sin conexión con ${provider.name}`, 'error');
+    connection('Sin conexión con {name}', 'error', { name: provider.name });
     $('#network-error').hidden = false;
     $('#network-error').textContent = error.message;
-    const retry = document.createElement('button'); retry.className = 'text-button'; retry.textContent = 'Reintentar'; retry.addEventListener('click', initialize);
-    $('#network-error').append(retry); $('#network-count').textContent = 'Red no disponible';
+    const retry = document.createElement('button'); retry.className = 'text-button'; retry.textContent = t('Reintentar'); retry.addEventListener('click', initialize);
+    $('#network-error').append(retry); $('#network-count').textContent = t('Red no disponible');
   }
 }
 
@@ -869,14 +904,14 @@ async function switchProvider(id, stopId) {
   stopGroup.eachLayer(clearStopTooltip); contextGroup.eachLayer(clearStopTooltip);
   stopGroup.clearLayers(); contextGroup.clearLayers(); selectionGroup.clearLayers();
   state.speed = provider.speed; $('#speed').value = state.speed; $('#speed-value').value = state.speed;
-  $('#provider-name').textContent = provider.name; $('#provider-description').textContent = provider.description;
-  $('#provider-source').href = provider.source; $('#provider-source').textContent = `Fuente: ${provider.name} ↗`;
+  $('#provider-name').textContent = provider.name; $('#provider-description').textContent = providerDescription(provider);
+  $('#provider-source').href = provider.source; $('#provider-source').textContent = t('Fuente: {name} ↗', { name: provider.name });
   $('#network-name').textContent = provider.name; $('#sheet').style.cssText = providerStyle(provider);
   for (const tab of document.querySelectorAll('.mode-tab')) tab.setAttribute('aria-pressed', String(tab.dataset.provider === id));
   state.sheetExpanded = false; $('#workspace').classList.remove('is-stop-expanded', 'has-stop');
   renderIdle();
   $('#search').value = ''; $('#search-results').hidden = true; $('#line-list').innerHTML = '';
-  $('#route-progress').textContent = ''; $('#network-count').textContent = 'Cargando red…';
+  $('#route-progress').textContent = ''; $('#network-count').textContent = t('Cargando red…');
   const url = new URL(location.href); url.searchParams.set('provider', id);
   if (stopId) url.searchParams.set('stop', stopId); else url.searchParams.delete('stop');
   history.replaceState(null, '', url);

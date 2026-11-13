@@ -58,7 +58,7 @@ try {
         if (url.pathname.endsWith('/old/stops')) return route.fulfill({ json: [{ stop_code: 77, stop_name: 'Centre', stop_lon: -0.38, stop_lat: 39.47 }] });
         if (url.pathname.endsWith('/old/routes')) return route.fulfill({ json: [{ route_short_name: '161A', route_long_name: 'Quart', route_id: 106, concesion: 'CV106' }] });
         if (url.pathname.includes('/estimacion/ocupacion/')) return route.fulfill({ json: [{ line: '161A', route: 'Quart', estimations: [{ minutesToArrival: 3, almex: { longitude: -0.381, latitude: 39.471 } }] }] });
-        if (url.pathname.includes('/stops/code/')) return route.fulfill({ json: [{ route_short_name: '161A' }] });
+        if (url.pathname.includes('/stops/code/')) return route.fulfill({ json: [{ route_short_name: '161A' }, { route_short_name: 'BUS-12345678901234567890' }] });
         if (url.pathname.includes('/shapes')) return route.fulfill({ json: { features: [], noServiceToday: true } });
         return route.fulfill({ json: { stops: [] } });
       }
@@ -176,6 +176,12 @@ try {
     await page.locator('[data-stop="77"]').click();
     assert.equal(await page.locator('.stop-map-label:visible').count(), 0, 'selected bus stop has no map tooltip');
     await page.locator('.inactive-lines-summary').filter({ hasText: 'Sin servicio hoy' }).waitFor();
+    const longLineChip = page.locator('.stop-lines .line-chip[data-line="BUS-12345678901234567890"]');
+    await longLineChip.waitFor();
+    assert.ok(await longLineChip.evaluate(element => {
+      const chip = element.getBoundingClientRect(), parent = element.parentElement.getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && chip.right <= parent.right + 1;
+    }), 'long bus line codes wrap within their chips');
     if (viewport.width <= 600) await page.locator('#stop-panel-toggle').click();
     await page.locator('.line-chip[data-line="161A"] .line-chip-status').filter({ hasText: 'Sin servicio hoy' }).waitFor();
     assert.equal(await page.locator('.bus-icon').count(), 0, 'vehicles without a valid current route are not drawn off-route');
@@ -210,6 +216,16 @@ try {
     }), 'location action centers the current position in the visible map area without resetting map rotation');
     await page.locator('#orient').click();
     await page.waitForFunction(() => Math.abs(window.__appMap.getBearing()) < .5);
+    await page.locator('#settings-open').click();
+    await page.locator('#language').selectOption('en');
+    assert.equal(await page.locator('html').getAttribute('lang'), 'en', 'language selection updates the document language');
+    assert.equal(await page.locator('#settings-title').textContent(), 'Settings', 'settings labels switch to English');
+    assert.equal(await page.locator('#search').getAttribute('placeholder'), 'Search by stop name or number', 'search text switches to English');
+    assert.equal(await page.locator('#all-routes + span').textContent(), 'Show the full network', 'map controls switch to English');
+    assert.match(await page.locator('.stop-code').textContent(), /^Stop B · /, 'selected stop details switch to English');
+    await page.locator('#language').selectOption('es');
+    assert.equal(await page.locator('#settings-title').textContent(), 'Ajustes', 'Spanish can be restored without reloading');
+    await page.locator('#settings').locator('form button').click();
     assert.deepEqual(errors, [], 'no browser exceptions');
     await page.close();
   }

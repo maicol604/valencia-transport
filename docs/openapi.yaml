@@ -92,6 +92,43 @@ paths:
                   data: { $ref: '#/components/schemas/StationStatus' }
                   meta: { $ref: '#/components/schemas/Metadata' }
         default: { $ref: '#/components/responses/Error' }
+  /operators/valenbisi/availability/history:
+    get:
+      operationId: listValenbisiAvailabilityHistory
+      description: Historical Valenbisi station snapshots. The from bound is inclusive and to is exclusive; timestamps are UTC in responses.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+          description: RFC 3339 timestamp with an explicit timezone.
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+          description: RFC 3339 timestamp with an explicit timezone; exclusive.
+        - name: stationId
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 }
+        - name: cursor
+          in: query
+          schema: { type: string, pattern: '^[1-9][0-9]{0,18}$' }
+          description: Snapshot ID returned as nextCursor by the previous page.
+      responses:
+        '200':
+          description: Historical snapshots ordered by collection insertion ID
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/AvailabilitySnapshot' } }
+                  meta: { $ref: '#/components/schemas/AvailabilityHistoryMetadata' }
+        default: { $ref: '#/components/responses/Error' }
   /operators/{operator}/stops/{stopId}/vehicles:
     parameters:
       - { $ref: '#/components/parameters/Operator' }
@@ -295,6 +332,48 @@ components:
         availableDocks: { type: [integer, 'null'] }
         status: { type: [string, 'null'] }
         lastUpdated: { type: [string, 'null'], format: date-time }
+    AvailabilitySnapshot:
+      type: object
+      required: [id, stationId, stationName, location, capacity, availableBikes, availableDocks, status, slotAt, capturedAt, sourceObservedAt]
+      properties:
+        id: { type: string }
+        stationId: { type: string }
+        stationName: { type: string }
+        location: { $ref: '#/components/schemas/Point' }
+        capacity: { type: [integer, 'null'], minimum: 0 }
+        availableBikes: { type: [integer, 'null'], minimum: 0 }
+        availableDocks: { type: [integer, 'null'], minimum: 0 }
+        status: { type: [string, 'null'] }
+        slotAt: { type: string, format: date-time, description: UTC collection slot. }
+        capturedAt: { type: string, format: date-time, description: UTC time the source response was received. }
+        sourceObservedAt: { type: [string, 'null'], format: date-time, description: Timestamp published by the source, if available. }
+    HistoryCollection:
+      type: object
+      required: [slotAt, startedAt, completedAt, status, expectedStationCount, storedStationCount, discardedStationCount, error]
+      properties:
+        slotAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [running, completed, partial, failed] }
+        expectedStationCount: { type: integer, minimum: 0 }
+        storedStationCount: { type: integer, minimum: 0 }
+        discardedStationCount: { type: integer, minimum: 0 }
+        error: { type: [string, 'null'] }
+    AvailabilityHistoryMetadata:
+      type: object
+      required: [from, to, timezone, count, limit, hasMore, nextCursor, latestCollection]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        timezone: { const: UTC }
+        count: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        hasMore: { type: boolean }
+        nextCursor: { type: [string, 'null'] }
+        latestCollection:
+          anyOf:
+            - { $ref: '#/components/schemas/HistoryCollection' }
+            - { type: 'null' }
     Metadata:
       type: object
       required: [source, fetchedAt]

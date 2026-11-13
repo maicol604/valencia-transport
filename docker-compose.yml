@@ -1,4 +1,21 @@
 services:
+  history-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${HISTORY_DB_NAME:-valenbisi_history}
+      POSTGRES_USER: ${HISTORY_DB_USER:-valenbisi}
+      POSTGRES_PASSWORD: ${HISTORY_DB_PASSWORD:?Set HISTORY_DB_PASSWORD in .env}
+    volumes:
+      - valenbisi-history:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - default
+
   backend:
     build:
       context: .
@@ -9,11 +26,41 @@ services:
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-}
       API_RATE_LIMIT: ${API_RATE_LIMIT:-120}
       CACHE_DIR: /app/.cache
+      HISTORY_DB_HOST: history-db
+      HISTORY_DB_PORT: 5432
+      HISTORY_DB_NAME: ${HISTORY_DB_NAME:-valenbisi_history}
+      HISTORY_DB_USER: ${HISTORY_DB_USER:-valenbisi}
+      HISTORY_DB_PASSWORD: ${HISTORY_DB_PASSWORD:?Set HISTORY_DB_PASSWORD in .env}
       VALENBISI_API_KEY: ${VALENBISI_API_KEY:-}
       VALENBISI_CONTRACT: ${VALENBISI_CONTRACT:-valence}
       VALENBISI_BIKES_AUTH: ${VALENBISI_BIKES_AUTH:-}
     volumes:
       - transit-cache:/app/.cache
+    networks:
+      - default
+    depends_on:
+      history-db:
+        condition: service_healthy
+
+  history-worker:
+    build:
+      context: .
+      target: backend
+    command: ["node", "services/history/worker.mjs"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      HISTORY_DB_HOST: history-db
+      HISTORY_DB_PORT: 5432
+      HISTORY_DB_NAME: ${HISTORY_DB_NAME:-valenbisi_history}
+      HISTORY_DB_USER: ${HISTORY_DB_USER:-valenbisi}
+      HISTORY_DB_PASSWORD: ${HISTORY_DB_PASSWORD:?Set HISTORY_DB_PASSWORD in .env}
+      VALENBISI_HISTORY_INTERVAL_MINUTES: ${VALENBISI_HISTORY_INTERVAL_MINUTES:-20}
+      VALENBISI_API_KEY: ${VALENBISI_API_KEY:-}
+      VALENBISI_CONTRACT: ${VALENBISI_CONTRACT:-valence}
+    depends_on:
+      history-db:
+        condition: service_healthy
     networks:
       - default
 
@@ -35,6 +82,7 @@ services:
 
 volumes:
   transit-cache:
+  valenbisi-history:
 
 networks:
   proxy-net:

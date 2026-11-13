@@ -20,7 +20,8 @@
     "service:emt": "node services/serve.mjs emt",
     "service:atmv": "node services/serve.mjs atmv",
     "service:metro": "node services/serve.mjs metro",
-    "service:cercanias": "node services/serve.mjs cercanias"
+    "service:cercanias": "node services/serve.mjs cercanias",
+    "history:worker": "node services/history/worker.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -30,6 +31,7 @@
     "jsdom": "^29.1.1",
     "leaflet": "1.9.4",
     "leaflet-rotate": "^0.5.4",
+    "pg": "^8.23.1",
     "playwright": "^1.58.0",
     "unzipper": "^0.12.5"
   },

@@ -2,6 +2,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { getRoutes, getStopArrivals, getStopStatus, listNetwork } from './api-data.mjs';
 import { vehicleEntity } from './adapters.mjs';
+import { getHistoryPool, readAvailabilityHistory } from './history/store.mjs';
+import { parseAvailabilityHistoryQuery } from './history/query.mjs';
 
 const operators = [
   { id: 'emt', name: 'EMT València', mode: 'bus' },
@@ -52,6 +54,21 @@ export async function handleApiV1(req, res, url) {
       const contract = await readFile(new URL('../docs/openapi.yaml', import.meta.url));
       res.writeHead(200, { 'Content-Type': 'application/yaml; charset=utf-8', 'Cache-Control': 'no-cache' });
       return res.end(req.method === 'HEAD' ? undefined : contract);
+    }
+    if (url.pathname === '/api/v1/operators/valenbisi/availability/history') {
+      let query;
+      try { query = parseAvailabilityHistoryQuery(url.searchParams); }
+      catch (error) {
+        if (error.status !== 400) throw error;
+        return send(400, { error: { code: error.code, message: error.message } });
+      }
+      const pool = getHistoryPool();
+      if (!pool) return send(503, { error: { code: 'history_not_configured', message: 'Availability history storage is not configured.' } });
+      try { return send(200, await readAvailabilityHistory(pool, query)); }
+      catch (error) {
+        console.error(`Availability history API failed: ${error.stack || error.message}`);
+        return send(503, { error: { code: 'history_unavailable', message: 'Availability history is temporarily unavailable.' } });
+      }
     }
     const parts = url.pathname.split('/').slice(3).map(part => decodeURIComponent(part));
     if (parts.length === 1 && parts[0] === 'operators') return send(200, { data: operators });

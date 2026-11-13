@@ -56,6 +56,27 @@ test('versioned API fails closed and authenticates without changing legacy route
   assert.equal((await fetch(`${base}/api/sae?parada=bad`)).status, 400);
 });
 
+test('Valenbisi history endpoint is authenticated, validates its range and requires durable storage', async t => {
+  const previous = { API_KEYS: process.env.API_KEYS, HISTORY_DB_PASSWORD: process.env.HISTORY_DB_PASSWORD };
+  process.env.API_KEYS = 'history-test-key';
+  delete process.env.HISTORY_DB_PASSWORD;
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  });
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}/api/v1/operators/valenbisi/availability/history`;
+  const range = '?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z';
+  assert.equal((await fetch(`${base}${range}`)).status, 401);
+  const invalid = await fetch(`${base}?from=2026-01-01&to=2026-01-02T00:00:00Z`, { headers: { 'X-API-Key': 'history-test-key' } });
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).error.code, 'invalid_query');
+  const unavailable = await fetch(`${base}${range}`, { headers: { 'X-API-Key': 'history-test-key' } });
+  assert.equal(unavailable.status, 503);
+  assert.equal((await unavailable.json()).error.code, 'history_not_configured');
+});
+
 test('versioned API normalizes a remote provider and protects cross-origin access', async t => {
   const remote = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');

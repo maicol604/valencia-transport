@@ -2,12 +2,13 @@
 
 En ruta reúne en un solo mapa la información publicada por cinco redes de transporte de València: EMT, ATMV / Met Go, Metrovalencia, Cercanías y Valenbisi. Permite buscar paradas, consultar llegadas, explorar recorridos y distinguir entre posiciones GPS, coordenadas publicadas sin hora de medición y posiciones estimadas.
 
-Es una aplicación web progresiva (PWA) hecha con **JavaScript vanilla** y Leaflet. Incluye un backend Node.js que normaliza y sirve datos de proveedores con formatos distintos, además de una API HTTP versionada para integraciones. No utiliza un framework de interfaz ni necesita una base de datos para funcionar.
+Es una aplicación web progresiva (PWA) hecha con **JavaScript vanilla** y Leaflet. Incluye un backend Node.js que normaliza y sirve datos de proveedores con formatos distintos, además de una API HTTP versionada para integraciones. El mapa en directo puede funcionar sin base de datos; el historial de Valenbisi usa PostgreSQL y un worker backend independiente.
 
 ## Guía de lectura
 
 - [Qué ofrece y de dónde vienen los datos](#redes-disponibles)
 - [Tecnologías y arquitectura](#tecnologías)
+- [EP de disponibilidad histórica de Valenbisi](docs/EP-VALENBISI-HISTORICO.md)
 - [Inicio local](#arrancar)
 - [Despliegue con Docker](#despliegue-en-un-vps)
 - [API para otras aplicaciones](#api-para-otras-aplicaciones)
@@ -23,6 +24,7 @@ Es una aplicación web progresiva (PWA) hecha con **JavaScript vanilla** y Leafl
 | Interfaz | HTML, CSS y JavaScript ES modules | Aplicación responsive, accesible y sin framework de UI |
 | Mapa | Leaflet 1.9.4, `leaflet-rotate` y teselas raster de OpenStreetMap | Capas de paradas, recorridos y vehículos; rotación táctil |
 | Backend | Node.js 22+, módulos ES y servidor HTTP nativo | Proxy de fuentes, normalización, caché y API JSON |
+| Historial | PostgreSQL y worker Node.js independiente | Snapshots persistentes de disponibilidad Valenbisi cada 20 min |
 | Compilación | esbuild | Agrupa el runtime del mapa y prepara el frontend estático |
 | API | OpenAPI 3.1 | Contrato de lectura bajo `/api/v1` |
 | Despliegue | Docker Compose, Nginx y Node.js | Nginx sirve `dist/` y reenvía `/api/` al backend |
@@ -44,6 +46,9 @@ flowchart LR
 	Browser -->|"/api/v1 · X-API-Key"| API["API normalizada"]
 	API --> Data["Adaptadores y caché de datos"]
 	Data --> Local
+	Worker["Worker Valenbisi · cada 20 min"] --> Sources
+	Worker --> History[("PostgreSQL · snapshots")]
+	API --> History
 	Browser --> Tiles["Teselas OpenStreetMap"]
 ```
 
@@ -58,10 +63,13 @@ El navegador usa adaptadores para convertir cada respuesta en redes, paradas, l�
 
 Las cachés son principalmente por proceso. Docker monta un volumen para la caché persistente que usa la API; las llegadas en tiempo real no se convierten en una base de datos histórica. No hay un historial de vehículos ni una garantía de que todos los proveedores publiquen todos sus servicios.
 
+El historial de Valenbisi se recoge desde el backend en un proceso separado del servidor HTTP, cada 20 minutos, y se conserva en PostgreSQL. La API autenticada entrega páginas de snapshots con timestamps UTC; una aplicación independiente puede consumirlas para generar mapas de calor. No se guarda historial de buses ni se añade aquí el visualizador.
+
 ## Qué ofrece
 
 - Buscar paradas por nombre o identificador y abrir su ficha desde el mapa.
 - Consultar líneas, próximas llegadas, recorridos y datos de disponibilidad de bicicletas.
+- Elegir español o inglés en los ajustes de la interfaz.
 - Mostrar líneas de una red y, opcionalmente, paradas de otras redes para facilitar transbordos.
 - Centrar la vista en la parada, vehículos disponibles o ubicación del dispositivo, si el usuario concede permiso.
 - Instalarse como PWA; guarda recursos de la aplicación y algunas teselas ya visitadas para facilitar la carga posterior.
@@ -103,7 +111,7 @@ Ejemplos de las otras redes:
 - `http://localhost:3000/?provider=cercanias&stop=65000`
 - `http://localhost:3000/?provider=valenbisi&stop=1`
 
-`npm start` ejecuta primero `npm run build:map` y después inicia el servidor local. Los handlers de los proveedores se cargan como módulos separados dentro del proceso. Cercanías prepara el subconjunto de València desde el GTFS nacional en la primera consulta, por lo que esa carga tarda más que las siguientes. En local, la caché vive en el proceso y se pierde al reiniciar; Docker configura un volumen para la caché persistente que usa la API.
+`npm start` ejecuta primero `npm run build:map` y después inicia el servidor local. Los handlers de los proveedores se cargan como módulos separados dentro del proceso. Cercanías prepara el subconjunto de València desde el GTFS nacional en la primera consulta, por lo que esa carga tarda más que las siguientes. En local, las cachés viven en el proceso y se pierden al reiniciar; Docker configura volúmenes para la caché de la API y el historial de Valenbisi.
 
 Valenbisi usa la API de JCDecaux si se configura `VALENBISI_API_KEY`; si no, o si esa consulta falla, Chromium carga la página pública de mapping y captura la respuesta de estaciones que utiliza la web oficial. La construcción de Docker instala Chromium y sus dependencias. Las estaciones se guardan en caché durante 45 segundos y el detalle de bicicletas de una estación durante 60 segundos.
 
@@ -120,18 +128,19 @@ Valenbisi usa la API de JCDecaux si se configura `VALENBISI_API_KEY`; si no, o s
 
 ## Despliegue en un VPS
 
-El proyecto incluye [docker-compose.yml](docker-compose.yml), [Dockerfile](Dockerfile) y [nginx.conf](nginx.conf). Docker Compose construye dos servicios: `frontend` sirve la web compilada con Nginx y reenvía `/api/` al `backend` Node, que ejecuta los cinco proveedores y la API v1. Solo el frontend publica un puerto; ambos servicios se reinician al arrancar el VPS y tienen comprobaciones de salud.
+El proyecto incluye [docker-compose.yml](docker-compose.yml), [Dockerfile](Dockerfile) y [nginx.conf](nginx.conf). Docker Compose levanta cuatro servicios: `frontend` sirve la web compilada con Nginx; `backend` ejecuta los proveedores y la API v1; `history-worker` recoge Valenbisi cada 20 minutos; y `history-db` conserva snapshots en PostgreSQL. Solo el frontend publica un puerto. Los servicios se reinician al arrancar el VPS y PostgreSQL tiene comprobación de salud.
 
 Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a OpenStreetMap, y espacio y memoria suficientes para procesar el GTFS nacional de Renfe. La primera consulta de Cercanías puede tardar y consumir más memoria; su caché está en RAM y se pierde al reiniciar.
 
-1. En el directorio del proyecto, prepara la configuración:
+1. En el directorio del proyecto, prepara la configuración y genera claves distintas para la API y la base de datos:
 
 	```bash
 	cp .env.example .env
 	openssl rand -hex 32
+	openssl rand -hex 32
 	```
 
-	Edita `.env` y coloca el valor generado en `API_KEYS`. Puedes indicar varias claves separadas por comas. Protege el archivo con `chmod 600 .env`; no lo subas al repositorio ni incluyas las claves en el código del navegador. Las variables de entorno de Docker también son visibles para los administradores del host.
+	Edita `.env`: usa un valor en `API_KEYS` y otro en `HISTORY_DB_PASSWORD`. Puedes indicar varias claves API separadas por comas. Protege el archivo con `chmod 600 .env`; no lo subas al repositorio ni incluyas las claves API en el navegador. La contraseña PostgreSQL solo se usa entre servicios de la red privada de Docker.
 
 	Valenbisi funciona sin variables adicionales mediante la página pública. Si tienes acceso a la API de JCDecaux, puedes configurar `VALENBISI_API_KEY` y, si el contrato usa otro identificador, `VALENBISI_CONTRACT` (por defecto `valence`). `VALENBISI_BIKES_AUTH` es opcional y permite configurar la autorización para la consulta de detalle de bicicletas.
 
@@ -146,7 +155,9 @@ Requisitos: Docker Engine con Compose, conexión saliente a los proveedores y a 
 
 4. Para producción, usa un dominio y HTTPS mediante un proxy inverso existente con certificado válido. Conecta ese proxy a `proxy-net` y configura su destino como `http://en-ruta-frontend:80`, conservando las rutas completas, incluidas `/api/`. Ajusta su tiempo de lectura a al menos 150 segundos para la carga inicial de Cercanías. Establece `BIND_ADDRESS=127.0.0.1` en `.env` y vuelve a ejecutar `docker compose up -d` para no exponer el puerto de prueba a Internet. La configuración incluida no solicita certificados ni habilita HTTPS por sí sola. La geolocalización móvil y el envío seguro de claves requieren HTTPS.
 
-`PROXY_NETWORK` cambia el nombre de la red Docker. `VALENBISI_API_KEY` y `VALENBISI_CONTRACT` configuran la fuente JCDecaux; son opcionales porque hay un fallback a la página pública. `VALENBISI_BIKES_AUTH` es opcional para las peticiones de detalle de bicicletas. `API_CORS_ORIGINS` contiene los orígenes web autorizados exactos, separados por comas, por ejemplo `https://cliente.example`; vacío no autoriza solicitudes CORS. Las peticiones servidor a servidor no necesitan CORS. `API_RATE_LIMIT` limita las peticiones a `/api/v1` por clave y minuto, por proceso; el valor predeterminado es 120.
+`PROXY_NETWORK` cambia el nombre de la red Docker. `HISTORY_DB_PASSWORD` es obligatorio para iniciar PostgreSQL; el volumen `valenbisi-history` persiste los snapshots incluso al recrear los contenedores. `VALENBISI_HISTORY_INTERVAL_MINUTES` define el intervalo en minutos (predeterminado: 20; válido: 1–1440). El worker alinea las capturas a intervalos UTC, intenta una captura al arrancar y no solapa ejecuciones. Los fallos de fuente o almacenamiento quedan registrados en logs/estado de captura; no se escriben ceros inventados ni se reconstruyen periodos perdidos. No hay borrado automático de snapshots: la retención es indefinida hasta que se elimine o restaure explícitamente la base de datos. Haz backups regulares de PostgreSQL.
+
+`HISTORY_DB_NAME` y `HISTORY_DB_USER` configuran la base de datos y el usuario (por defecto `valenbisi_history` y `valenbisi`). `VALENBISI_API_KEY` y `VALENBISI_CONTRACT` configuran la fuente JCDecaux; son opcionales porque hay un fallback a la página pública. `VALENBISI_BIKES_AUTH` es opcional para las peticiones de detalle de bicicletas. `API_CORS_ORIGINS` contiene los orígenes web autorizados exactos, separados por comas, por ejemplo `https://cliente.example`; vacío no autoriza solicitudes CORS. Las peticiones servidor a servidor no necesitan CORS. `API_RATE_LIMIT` limita las peticiones a `/api/v1` por clave y minuto, por proceso; el valor predeterminado es 120.
 
 Comprueba desde el propio VPS, sustituyendo la clave de forma segura en tu terminal:
 
@@ -158,6 +169,8 @@ curl -H "X-API-Key: $TRANSIT_API_KEY" http://127.0.0.1:8083/api/v1/operators
 unset TRANSIT_API_KEY
 docker compose logs -f --tail=100
 ```
+
+Para comprobar la captura y sus fallos: `docker compose logs -f --tail=100 history-worker`. `docker compose down` conserva el volumen histórico; **no uses `docker compose down -v`** si quieres conservar los datos.
 
 Usa HTTPS para consultar la API desde fuera del VPS; HTTP directo es solo para diagnóstico local. La API versionada requiere clave, pero `/api/` y `/api/providers/` son intermediarios públicos necesarios para la web y no están protegidos por `API_KEYS` ni por `API_RATE_LIMIT`. En producción aplica límites por cliente en el proxy exterior y evita confiar en cabeceras de IP enviadas directamente por clientes. Si hay varias réplicas, usa un limitador compartido. Comprueba también las políticas y límites de uso de las fuentes y de los tiles.
 
@@ -188,6 +201,13 @@ curl -H "X-API-Key: $TRANSIT_API_KEY" 'http://localhost:3000/api/v1/operators/me
 ```
 
 Las rutas incluyen `/operators`, `/operators/{operator}/stops`, `/operators/{operator}/lines` y los recursos de detalle, llegadas, vehículos y recorridos descritos en OpenAPI. Los IDs son cadenas en el ámbito de cada operador; las fechas se expresan en UTC y las coordenadas GeoJSON son `[longitud, latitud]`. La paginación usa `limit` y `offset` y ordena por ID. Los datos pueden cambiar entre páginas al actualizarse la red.
+
+El historial de Valenbisi está disponible para consumidores externos en `GET /api/v1/operators/valenbisi/availability/history`. Requiere `from` y `to` en RFC 3339 con zona horaria explícita; `from` es inclusivo y `to` exclusivo. Admite `stationId`, `limit` (1–5000, predeterminado 1000) y `cursor` (`nextCursor` de la respuesta anterior). Los timestamps se devuelven en UTC; la aplicación consumidora debe convertirlos a `Europe/Madrid` para agrupar por día/hora local. `sourceObservedAt` es `null` si la fuente no publica timestamp. `meta.latestCollection` informa estado y cobertura de la última captura. El volumen de respuesta se mantiene acotado y no se devuelve un total completo, para evitar recuentos costosos sobre varios años.
+
+```bash
+curl -H "X-API-Key: $TRANSIT_API_KEY" \
+  'http://localhost:3000/api/v1/operators/valenbisi/availability/history?from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z&limit=1000'
+```
 
 `meta.fetchedAt` indica cuándo se normalizó la respuesta, no necesariamente cuándo se midió el dato. `position.measuredAt` es `null` cuando el proveedor no publica la hora; la API nunca convierte la posición estimada por la interfaz en una posición real. La lista de vehículos por parada es parcial y puede estar vacía; no es un inventario global. Las geometrías de ATMV con `serviceToday: false` corresponden a un día alternativo; si falla alguna variante, `meta.failedVariants` indica cuántas faltan.
 
@@ -275,10 +295,12 @@ public/styles.css       Interfaz clara y diseño adaptable
 public/js/api.js         Reexportación de compatibilidad para EMT
 public/js/services/     Un adaptador de frontend por operador y transporte compartido
 public/js/arrivals.js    Parsing, horas de Madrid y emparejamiento de llegadas
+public/js/i18n.js        Traducciones de la interfaz al español e inglés
 public/js/geo.js         Recorridos, sentidos, distancias e interpolación
 public/js/app.js         Mapa, interfaz, selección, polling y animación
 server.mjs              Servidor estático y gateway sin lógica de operadores
 services/               Cinco proveedores, gateway, API v1 y handlers por operador
+services/history/        Worker periódico, persistencia PostgreSQL y consultas del histórico
 scripts/build.mjs       Generación del frontend estático autónomo
 test/                   Pruebas geográficas, de servidor y navegador
 ```

@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff">
   <meta name="color-scheme" content="light">
-  <meta name="description" content="Metro, Cercanías, EMT, Met Go y Valenbisi en un solo mapa: llegadas en directo y posición de tu transporte en València.">
+  <meta name="description" content="Metro, Cercanías, EMT, Met Go y Valenbisi en un solo mapa: llegadas en directo y posición de tu transporte en València." data-i18n-content="Metro, Cercanías, EMT, Met Go y Valenbisi en un solo mapa: llegadas en directo y posición de tu transporte en València.">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="En ruta">
-  <title>En ruta · Transporte de València</title>
+  <title data-i18n="En ruta · Transporte de València">En ruta · Transporte de València</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
@@ -23,66 +23,67 @@
 </head>
 <body>
   <main id="workspace" class="app">
-    <section class="map-shell" aria-label="Mapa interactivo de transportes de València"><div id="map"></div></section>
+    <section class="map-shell" aria-label="Mapa interactivo de transportes de València" data-i18n-aria-label="Mapa interactivo de transportes de València"><div id="map"></div></section>
 
     <header class="topbar">
       <div class="search-card">
-        <a class="brand" href="./" aria-label="En ruta, inicio"><img src="./icons/icon.svg" alt="" width="32" height="32"></a>
-        <label class="search-wrap"><span class="sr-only">Buscar parada</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg><input id="search" type="search" enterkeyhint="search" autocomplete="off" placeholder="Buscar parada o número" aria-label="Buscar parada por nombre o número"></label>
-        <span id="connection" class="connection" data-state="loading" title="Estado de la conexión"><i></i><span>Conectando</span></span>
-        <button id="settings-open" class="icon-button" aria-label="Ajustes" title="Ajustes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+        <a class="brand" href="./" aria-label="En ruta, inicio" data-i18n-aria-label="En ruta, inicio"><img src="./icons/icon.svg" alt="" width="32" height="32"></a>
+        <label class="search-wrap"><span class="sr-only" data-i18n="Buscar parada">Buscar parada</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg><input id="search" type="search" enterkeyhint="search" autocomplete="off" placeholder="Buscar parada o número" data-i18n-placeholder="Buscar parada o número" aria-label="Buscar parada por nombre o número" data-i18n-aria-label="Buscar parada por nombre o número"></label>
+        <span id="connection" class="connection" data-state="loading" title="Estado de la conexión" data-i18n-title="Estado de la conexión"><i></i><span>Conectando</span></span>
+        <button id="settings-open" class="icon-button" aria-label="Ajustes" data-i18n-aria-label="Ajustes" title="Ajustes" data-i18n-title="Ajustes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
       </div>
-      <div id="search-results" class="search-results" aria-label="Resultados de búsqueda" hidden></div>
+      <div id="search-results" class="search-results" aria-label="Resultados de búsqueda" data-i18n-aria-label="Resultados de búsqueda" hidden></div>
     </header>
 
     <div class="map-tools">
-      <button id="orient" class="map-button" title="Orientar al norte" aria-label="Orientar el mapa al norte" hidden><span class="icon-compass" aria-hidden="true"></span></button>
-      <button id="locate" class="map-button" title="Centrar en mi ubicación" aria-label="Centrar en mi ubicación"><span class="icon-target" aria-hidden="true"></span></button>
-      <button id="fit" class="map-button" title="Centrar parada y vehículos" aria-label="Centrar parada y vehículos"><span class="icon-fit" aria-hidden="true"></span></button>
-      <button id="lines-toggle" class="map-button layers-button" aria-expanded="false" aria-controls="line-panel" title="Líneas y capas"><span class="icon-layers" aria-hidden="true"></span><span class="sr-only">Líneas</span></button>
+      <button id="orient" class="map-button" title="Orientar al norte" data-i18n-title="Orientar al norte" aria-label="Orientar el mapa al norte" data-i18n-aria-label="Orientar el mapa al norte" hidden><span class="icon-compass" aria-hidden="true"></span></button>
+      <button id="locate" class="map-button" title="Centrar en mi ubicación" data-i18n-title="Centrar en mi ubicación" aria-label="Centrar en mi ubicación" data-i18n-aria-label="Centrar en mi ubicación"><span class="icon-target" aria-hidden="true"></span></button>
+      <button id="fit" class="map-button" title="Centrar parada y vehículos" data-i18n-title="Centrar parada y vehículos" aria-label="Centrar parada y vehículos" data-i18n-aria-label="Centrar parada y vehículos"><span class="icon-fit" aria-hidden="true"></span></button>
+      <button id="lines-toggle" class="map-button layers-button" aria-expanded="false" aria-controls="line-panel" title="Líneas y capas" data-i18n-title="Líneas y capas"><span class="icon-layers" aria-hidden="true"></span><span class="sr-only" data-i18n="Líneas">Líneas</span></button>
     </div>
 
-    <section id="line-panel" class="line-panel" hidden aria-label="Líneas y capas del mapa">
-      <div class="section-heading"><h2>Líneas</h2><button id="lines-close" class="icon-button ghost" aria-label="Cerrar capas">✕</button></div>
+    <section id="line-panel" class="line-panel" hidden aria-label="Líneas y capas del mapa" data-i18n-aria-label="Líneas y capas">
+      <div class="section-heading"><h2 data-i18n="Líneas">Líneas</h2><button id="lines-close" class="icon-button ghost" aria-label="Cerrar capas" data-i18n-aria-label="Cerrar capas">✕</button></div>
       <div id="line-list" class="line-list"></div>
       <div class="line-panel-options">
-        <label class="switch"><input id="all-routes" type="checkbox"><span>Mostrar toda la red</span></label>
-        <label class="switch"><input id="context-stops" type="checkbox"><span>Paradas de otras redes</span></label>
+        <label class="switch"><input id="all-routes" type="checkbox"><span data-i18n="Mostrar toda la red">Mostrar toda la red</span></label>
+        <label class="switch"><input id="context-stops" type="checkbox"><span data-i18n="Paradas de otras redes">Paradas de otras redes</span></label>
       </div>
-      <button id="clear-line" class="text-button">Quitar selección</button>
+      <button id="clear-line" class="text-button" data-i18n="Quitar selección">Quitar selección</button>
       <p id="route-progress" class="muted"></p>
     </section>
 
-    <aside id="sheet" class="sheet" aria-label="Paradas y próximas llegadas">
-      <button id="sheet-handle" class="sheet-handle" aria-label="Expandir o contraer panel"><span></span></button>
+    <aside id="sheet" class="sheet" aria-label="Paradas y próximas llegadas" data-i18n-aria-label="Paradas y próximas llegadas">
+      <button id="sheet-handle" class="sheet-handle" aria-label="Expandir o contraer panel" data-i18n-aria-label="Expandir o contraer panel"><span></span></button>
       <div class="sheet-context"><span class="small-dot"></span><strong id="network-name">En ruta</strong><span id="network-count">Cargando red…</span></div>
       <div id="network-error" class="notice error" role="alert" hidden></div>
       <section id="stop-panel" class="stop-panel" aria-labelledby="stop-name"></section>
     </aside>
 
-    <nav id="modebar" class="modebar" aria-label="Red de transporte"></nav>
+    <nav id="modebar" class="modebar" aria-label="Red de transporte" data-i18n-aria-label="Red de transporte"></nav>
     <div id="toast" role="status" class="toast" hidden></div>
   </main>
 
   <dialog id="settings" aria-labelledby="settings-title">
-    <form method="dialog" class="dialog-heading"><h2 id="settings-title">Ajustes</h2><button aria-label="Cerrar ajustes" class="icon-button ghost">✕</button></form>
-    <button id="install-app" class="primary-button" hidden><img src="./icons/icon.svg" alt="" width="22" height="22">Instalar En ruta</button>
-    <p id="ios-install" class="install-hint" hidden>Para instalarla en iPhone, pulsa <b>Compartir</b> y después <b>Añadir a pantalla de inicio</b>.</p>
+    <form method="dialog" class="dialog-heading"><h2 id="settings-title" data-i18n="Ajustes">Ajustes</h2><button aria-label="Cerrar ajustes" data-i18n-aria-label="Cerrar ajustes" class="icon-button ghost">✕</button></form>
+    <button id="install-app" class="primary-button" hidden><img src="./icons/icon.svg" alt="" width="22" height="22"><span data-i18n="Instalar En ruta">Instalar En ruta</span></button>
+    <p id="ios-install" class="install-hint" data-i18n-html="Para instalarla en iPhone, pulsa &lt;b&gt;Compartir&lt;/b&gt; y después &lt;b&gt;Añadir a pantalla de inicio&lt;/b&gt;." hidden>Para instalarla en iPhone, pulsa <b>Compartir</b> y después <b>Añadir a pantalla de inicio</b>.</p>
     <div class="settings-group">
       <div class="provider-info"><strong id="provider-name"></strong><p id="provider-description"></p><a id="provider-source" target="_blank" rel="noopener noreferrer"></a></div>
     </div>
     <div class="settings-group">
-      <label class="switch"><input id="advanced-settings" type="checkbox"><span>Mostrar configuración avanzada</span></label>
+      <label class="field"><span data-i18n="Idioma de la interfaz">Idioma de la interfaz</span><select id="language" aria-label="Idioma de la interfaz" data-i18n-aria-label="Idioma de la interfaz"><option value="es">Español</option><option value="en">English</option></select></label>
+      <label class="switch"><input id="advanced-settings" type="checkbox"><span data-i18n="Mostrar configuración avanzada">Mostrar configuración avanzada</span></label>
       <div id="advanced-settings-panel" hidden>
-        <label class="field"><span class="field-row">Velocidad para estimaciones <span><output id="speed-value">12</output> km/h</span></span><input id="speed" type="range" min="6" max="60" step="1" value="12"></label>
+        <label class="field"><span class="field-row"><span data-i18n="Velocidad para estimaciones">Velocidad para estimaciones</span> <span><output id="speed-value">12</output> km/h</span></span><input id="speed" type="range" min="6" max="60" step="1" value="12"></label>
       </div>
-      <label class="switch"><input id="animate" type="checkbox" checked><span>Animar el avance de los vehículos</span></label>
-      <label class="field"><span class="field-row">Conexión de datos</span><select id="transport"><option value="auto">Automática</option><option value="direct">Directa · solo navegador</option><option value="proxy">Siempre por servidor</option></select></label>
+      <label class="switch"><input id="animate" type="checkbox" checked><span data-i18n="Animar el avance de los vehículos">Animar el avance de los vehículos</span></label>
+      <label class="field"><span class="field-row" data-i18n="Conexión de datos">Conexión de datos</span><select id="transport"><option value="auto" data-i18n="Automática">Automática</option><option value="direct" data-i18n="Directa · solo navegador">Directa · solo navegador</option><option value="proxy" data-i18n="Siempre por servidor">Siempre por servidor</option></select></label>
     </div>
     <details class="explanation">
-      <summary>Cómo se calculan las posiciones</summary>
-      <p><b>GPS</b>: coordenadas y hora publicadas por Renfe. <b>Publicada</b>: coordenadas Met Go sin hora GPS. <b>Estimada</b>: tiempo de llegada × velocidad media, medido hacia atrás sobre el recorrido.</p>
-      <p>EMT y Cercanías se consultan cada 20 s; Met Go y Metrovalencia, cada 30 s; Valenbisi, cada minuto. Se ocultan datos con más de 90 s, horarios programados y posiciones fuera de cobertura.</p>
+      <summary data-i18n="Cómo se calculan las posiciones">Cómo se calculan las posiciones</summary>
+      <p data-i18n-html="&lt;b&gt;GPS&lt;/b&gt;: coordenadas y hora publicadas por Renfe. &lt;b&gt;Publicada&lt;/b&gt;: coordenadas Met Go sin hora GPS. &lt;b&gt;Estimada&lt;/b&gt;: tiempo de llegada × velocidad media, medido hacia atrás sobre el recorrido."><b>GPS</b>: coordenadas y hora publicadas por Renfe. <b>Publicada</b>: coordenadas Met Go sin hora GPS. <b>Estimada</b>: tiempo de llegada × velocidad media, medido hacia atrás sobre el recorrido.</p>
+      <p data-i18n="EMT y Cercanías se consultan cada 20 s; Met Go y Metrovalencia, cada 30 s; Valenbisi, cada minuto. Se ocultan datos con más de 90 s, horarios programados y posiciones fuera de cobertura.">EMT y Cercanías se consultan cada 20 s; Met Go y Metrovalencia, cada 30 s; Valenbisi, cada minuto. Se ocultan datos con más de 90 s, horarios programados y posiciones fuera de cobertura.</p>
     </details>
   </dialog>
 </body>

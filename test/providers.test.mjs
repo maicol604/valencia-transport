@@ -20,7 +20,7 @@ test('Valenbisi normalizes the station response captured from the public page', 
   }], 1700000001000);
   assert.deepEqual(result.stations[0], {
     id: '7', name: 'Plaça de l’Ajuntament', coords: [-0.3763, 39.4699], capacity: 20,
-    availableBikes: 8, availableDocks: 12, status: 'open', lastUpdated: 1700000000000,
+    availableBikes: 8, availableDocks: 12, status: 'open', lastUpdated: 1700000000000, sourceUpdatedAt: 1700000000000,
   });
 });
 

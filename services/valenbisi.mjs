@@ -96,6 +96,13 @@ function number(value, fallback = null) {
   return Number.isFinite(result) ? result : fallback;
 }
 
+function sourceTimestamp(value) {
+  if (value == null || value === '') return null;
+  const numeric = number(value);
+  const milliseconds = numeric == null ? Date.parse(value) : numeric < 100000000000 ? numeric * 1000 : numeric;
+  return Number.isFinite(milliseconds) && Number.isFinite(new Date(milliseconds).getTime()) ? milliseconds : null;
+}
+
 export function normalizeValenbisiStations(payload, fetchedAt = Date.now()) {
   if (!Array.isArray(payload)) throw new Error('Valenbisi returned an invalid station list');
   const stations = payload.map(item => {
@@ -106,16 +113,23 @@ export function normalizeValenbisiStations(payload, fetchedAt = Date.now()) {
     const capacity = number(item.totalStands?.capacity ?? item.bikeStands);
     const availableBikes = number(item.totalStands?.availabilities?.bikes ?? item.availableBikes ?? item.available_bikes);
     const availableDocks = number(item.totalStands?.availabilities?.stands ?? item.availableStands ?? item.available_docks);
+    const sourceUpdatedAt = sourceTimestamp(item.lastUpdate ?? item.last_updated);
     if (id == null || latitude == null || longitude == null) return null;
     return {
       id: String(id), name: String(item.name || `Estación ${id}`), coords: [longitude, latitude],
       capacity, availableBikes, availableDocks,
       status: item.status ? String(item.status).toLowerCase() : null,
-      lastUpdated: number(item.lastUpdate ?? item.last_updated ?? fetchedAt, fetchedAt),
+      lastUpdated: sourceUpdatedAt ?? fetchedAt, sourceUpdatedAt,
     };
   }).filter(Boolean);
   if (!stations.length && payload.length) throw new Error('Valenbisi returned no valid stations');
-  return { stations, fetchedAt };
+  return { stations, fetchedAt, discardedStationCount: payload.length - stations.length };
+}
+
+export async function closeValenbisiBrowser() {
+  const current = browserPromise;
+  browserPromise = null;
+  if (current) await (await current).close();
 }
 
 export function normalizeValenbisiBikes(payload) {
